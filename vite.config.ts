@@ -9,6 +9,8 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
+    allowedHosts: ['fetsu.id', 'www.fetsu.id'] ,
+    host: '0.0.0.0', // atau true untuk semua host
     port: 5172,
   },
 })

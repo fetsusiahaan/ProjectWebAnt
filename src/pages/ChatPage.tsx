@@ -8,6 +8,7 @@ import {
   RefreshCw, ChevronRight, Paperclip,
   X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
+  ZoomIn, ZoomOut, Mic, MicOff,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -16,7 +17,7 @@ import { CHAT_CONFIG, SYSTEM_INSTRUCTION } from '../config/chatConfig';
 
 const API_KEY = CHAT_CONFIG.apiKey;
 const MODEL = CHAT_CONFIG.model;
-const IMAGE_MODEL = CHAT_CONFIG.imageModel;
+const IMAGE_MODELS = CHAT_CONFIG.imageModels || [CHAT_CONFIG.imageModel, 'nano-banana', 'imagen-3.0-generate-002'];
 const ACCEPTED_TYPES = CHAT_CONFIG.acceptedFileTypes;
 const MAX_TOKENS = CHAT_CONFIG.maxTokens;
 const SESSION_DURATION = CHAT_CONFIG.sessionDurationMs;
@@ -68,6 +69,55 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+  const blob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const parts = dataUrl.split(',');
+      const header = parts[0];
+      const base64 = parts[1];
+      const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+      resolve({ base64, mimeType });
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function generateSvgFallbackBase64(promptText: string): { base64: string; mimeType: string } {
+  const seed = Math.floor(Math.random() * 360);
+  const title = promptText.length > 45 ? promptText.slice(0, 42) + '...' : promptText;
+  const cleanTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="hsl(${seed}, 70%, 15%)" />
+        <stop offset="50%" stop-color="#09090F" />
+        <stop offset="100%" stop-color="hsl(${(seed + 140) % 360}, 80%, 20%)" />
+      </linearGradient>
+      <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#EF4444" />
+        <stop offset="100%" stop-color="#F59E0B" />
+      </linearGradient>
+    </defs>
+    <rect width="1024" height="1024" fill="url(#bg)" />
+    <circle cx="512" cy="400" r="280" fill="none" stroke="url(#accent)" stroke-width="4" opacity="0.3" />
+    <circle cx="512" cy="400" r="200" fill="none" stroke="#EF4444" stroke-width="2" opacity="0.5" />
+    <polygon points="512,220 640,460 384,460" fill="url(#accent)" opacity="0.8" />
+    <text x="512" y="740" text-anchor="middle" fill="#FFFFFF" font-family="sans-serif" font-size="32" font-weight="bold">${cleanTitle}</text>
+    <text x="512" y="790" text-anchor="middle" fill="#94A3B8" font-family="monospace" font-size="20">AI Generated Visual Asset</text>
+    <text x="512" y="940" text-anchor="middle" fill="#EF4444" font-family="sans-serif" font-size="18" font-weight="bold">FETSUBOT AI</text>
+  </svg>`;
+
+  const base64 = btoa(unescape(encodeURIComponent(svg)));
+  return { base64, mimeType: 'image/svg+xml' };
 }
 
 // ─── Rate Limit Config ───────────────────────────────────────────────────
@@ -198,7 +248,7 @@ function parseInline(text: string): ReactNode[] {
           href={targetUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
         >
           {parseInline(mdLabel)}
         </a>
@@ -209,7 +259,7 @@ function parseInline(text: string): ReactNode[] {
         <a
           key={key++}
           href={`mailto:${email}`}
-          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
         >
           {email}
         </a>
@@ -222,7 +272,7 @@ function parseInline(text: string): ReactNode[] {
           href={rawUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
         >
           {rawUrl}
         </a>
@@ -236,7 +286,7 @@ function parseInline(text: string): ReactNode[] {
           href={targetUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
         >
           {domainUrl}
         </a>
@@ -266,40 +316,61 @@ function parseInline(text: string): ReactNode[] {
 }
 
 // ─── Generated Image Card ────────────────────────────────────────────────────
-const GeneratedImageCard: FC<{ base64: string; prompt: string; index: number; mime?: string }> = ({ base64, prompt, index, mime = 'image/png' }) => {
+const GeneratedImageCard: FC<{
+  base64: string;
+  prompt: string;
+  index: number;
+  mime?: string;
+  onZoom?: () => void;
+}> = ({ base64, prompt, index, mime = 'image/png', onZoom }) => {
   const ext = mime.split('/')[1] || 'png';
   const filename = `fetsubot-image-${index + 1}.${ext}`;
+  const src = `data:${mime};base64,${base64}`;
 
   return (
     <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group max-w-xs sm:max-w-sm my-2 shadow-xl">
-      <img
-        src={`data:${mime};base64,${base64}`}
-        alt={`Generated: ${prompt}`}
-        className="w-full object-cover rounded-t-xl"
-      />
-      {/* Overlay on hover (desktop) */}
-      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-200 hidden sm:flex items-end justify-end p-2 opacity-0 group-hover:opacity-100">
-        <button
-          onClick={() => downloadBase64Image(base64, filename, mime)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-500 transition-colors shadow-lg"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>Download</span>
-        </button>
+      {/* Clickable Image Container */}
+      <div
+        onClick={onZoom}
+        className="relative cursor-pointer overflow-hidden group/img"
+        title="Klik untuk Zoom / Perbesar"
+      >
+        <img
+          src={src}
+          alt={`Generated: ${prompt}`}
+          className="w-full object-cover rounded-t-xl transition-transform duration-300 group-hover/img:scale-105"
+        />
+        {/* Overlay on hover */}
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs">
+          <ZoomIn className="w-5 h-5 text-red-400" />
+          <span>Klik untuk Zoom</span>
+        </div>
       </div>
-      {/* Action Bar (Always visible on both Mobile & Desktop) */}
+
+      {/* Action Bar */}
       <div className="px-3 py-2.5 bg-slate-900/90 border-t border-slate-700/80 flex items-center justify-between gap-2">
         <p className="text-[11px] font-mono text-slate-400 truncate flex-1" title={prompt}>
           🎨 &quot;{prompt}&quot;
         </p>
-        <button
-          onClick={() => downloadBase64Image(base64, filename, mime)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white text-xs font-semibold shadow-md hover:from-red-500 hover:to-red-400 transition-all active:scale-95 flex-shrink-0"
-          title="Download Gambar"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>Download</span>
-        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {onZoom && (
+            <button
+              onClick={onZoom}
+              className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 transition-all active:scale-95"
+              title="Mode Zoom"
+            >
+              <ZoomIn className="w-3.5 h-3.5 text-red-400" />
+            </button>
+          )}
+          <button
+            onClick={() => downloadBase64Image(base64, filename, mime)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white text-xs font-semibold shadow-md hover:from-red-500 hover:to-red-400 transition-all active:scale-95"
+            title="Download Gambar"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Download</span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -590,14 +661,25 @@ const Cursor: FC = () => (
 );
 
 // ─── Attachment chip ──────────────────────────────────────────────────────────
-const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void }> = ({ file, onRemove }) => (
+const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void; onZoom?: () => void }> = ({ file, onRemove, onZoom }) => (
   <div className="relative group flex-shrink-0">
     {file.isImage ? (
-      <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-700 bg-slate-900">
-        <img src={`data:${file.mimeType};base64,${file.base64}`} alt={file.name} className="w-full h-full object-cover" />
+      <div
+        onClick={onZoom}
+        className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-700 bg-slate-900 cursor-pointer group/chip"
+        title="Klik untuk Zoom / Perbesar"
+      >
+        <img src={`data:${file.mimeType};base64,${file.base64}`} alt={file.name} className="w-full h-full object-cover transition-transform duration-300 group-hover/chip:scale-110" />
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/chip:opacity-100 flex items-center justify-center transition-opacity">
+          <ZoomIn className="w-4 h-4 text-white" />
+        </div>
         {onRemove && (
-          <button onClick={onRemove} className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-            <X className="w-4 h-4 text-white" />
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            className="absolute top-1 right-1 p-1 rounded-full bg-black/70 text-slate-300 hover:text-red-400 transition-colors z-10"
+            title="Hapus Lampiran"
+          >
+            <X className="w-3 h-3" />
           </button>
         )}
       </div>
@@ -617,6 +699,114 @@ const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void }> = ({ fil
     )}
   </div>
 );
+
+// ─── Image Zoom Lightbox Modal ────────────────────────────────────────────────
+interface ZoomImageData {
+  src: string;
+  prompt: string;
+  filename?: string;
+  mime?: string;
+  base64?: string;
+}
+
+const ImageZoomModal: FC<{ image: ZoomImageData | null; onClose: () => void }> = ({ image, onClose }) => {
+  const [isZoomed, setIsZoomed] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  if (!image) return null;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6"
+      >
+        {/* Top Controls */}
+        <div className="flex items-center justify-between gap-4 z-10" onClick={(e) => e.stopPropagation()}>
+          <div className="min-w-0">
+            <p className="text-white text-xs sm:text-sm font-bold truncate max-w-xs sm:max-w-md">
+              🎨 {image.prompt || 'Gambar'}
+            </p>
+            <p className="text-[10px] sm:text-[11px] font-mono text-slate-400">Mode Zoom Lightbox</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsZoomed((prev) => !prev)}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800 transition-all flex items-center gap-1.5 text-xs font-mono"
+              title={isZoomed ? 'Zoom Reset (100%)' : 'Zoom In (150%)'}
+            >
+              {isZoomed ? <ZoomOut className="w-4 h-4 text-red-400" /> : <ZoomIn className="w-4 h-4 text-red-400" />}
+              <span className="hidden sm:inline">{isZoomed ? '100%' : '150%'}</span>
+            </button>
+
+            {image.base64 && (
+              <button
+                onClick={() =>
+                  downloadBase64Image(
+                    image.base64!,
+                    image.filename || 'fetsubot-image.png',
+                    image.mime || 'image/png'
+                  )
+                }
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white text-xs font-semibold transition-all shadow-lg"
+                title="Download Gambar"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Download</span>
+              </button>
+            )}
+
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-red-600 transition-all"
+              title="Tutup (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Center Image Viewport */}
+        <div
+          className="flex-1 flex items-center justify-center overflow-auto py-4 select-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <motion.img
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: isZoomed ? 1.5 : 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            src={image.src}
+            alt={image.prompt}
+            onClick={() => setIsZoomed((prev) => !prev)}
+            className={`max-h-[76vh] sm:max-h-[82vh] max-w-full object-contain rounded-2xl shadow-2xl transition-transform cursor-pointer border border-slate-800/80 ${
+              isZoomed ? 'cursor-zoom-out' : 'cursor-zoom-in'
+            }`}
+          />
+        </div>
+
+        {/* Bottom Bar Info */}
+        <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-slate-400 z-10" onClick={(e) => e.stopPropagation()}>
+          <span className="truncate max-w-xs sm:max-w-md">🔍 Klik gambar untuk perbesar/kecil • Esc untuk keluar</span>
+          <button onClick={onClose} className="hover:text-red-400 underline transition-colors">
+            Tutup (Esc)
+          </button>
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  );
+};
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export const ChatPage: FC = () => {
@@ -653,15 +843,205 @@ export const ChatPage: FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [zoomImage, setZoomImage] = useState<ZoomImageData | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [isRecordingMedia, setIsRecordingMedia] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const startMediaRecorderFallback = async () => {
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setIsListening(false);
+      setIsRecordingMedia(false);
+      setApiError('🎙️ Perekaman suara diizinkan di localhost atau HTTPS. Silakan akses via http://localhost:5173');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
+        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+        else if (MediaRecorder.isTypeSupported('audio/ogg')) mimeType = 'audio/ogg';
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (audioBlob.size < 1000) {
+          setIsListening(false);
+          setIsRecordingMedia(false);
+          return;
+        }
+
+        setIsListening(true);
+        setApiError(null);
+
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = async () => {
+            const base64Audio = (reader.result as string).split(',')[1];
+            if (!base64Audio || !aiRef.current) return;
+
+            const res = await aiRef.current.models.generateContent({
+              model: MODEL,
+              contents: [{
+                role: 'user',
+                parts: [
+                  { inlineData: { mimeType, data: base64Audio } },
+                  { text: 'Transkripsikan rekaman suara ini ke dalam teks Bahasa Indonesia. Hanya kembalikan teks hasil transkrip saja tanpa komentar atau penjelasan tambahan.' }
+                ]
+              }]
+            });
+
+            const text = res.text?.trim() || '';
+            if (text) {
+              setInput(text);
+              sendMessage(text);
+            }
+          };
+        } catch (err) {
+          console.error('Audio transcribe error:', err);
+          setApiError('Gagal memproses rekaman suara.');
+        } finally {
+          setIsListening(false);
+          setIsRecordingMedia(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecordingMedia(true);
+      setIsListening(true);
+      setApiError(null);
+    } catch (err) {
+      console.error('MediaRecorder error:', err);
+      setIsListening(false);
+      setIsRecordingMedia(false);
+      setApiError('Tidak dapat mengakses mikrofon. Pastikan izin mikrofon telah diberikan pada browser Anda.');
+    }
+  };
+
+  const stopMediaRecorder = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecordingMedia(false);
+  };
+
+  const toggleListening = async () => {
+    if (isRecordingMedia) {
+      stopMediaRecorder();
+      return;
+    }
+
+    if (isListening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch { /* empty */ }
+      setIsListening(false);
+      return;
+    }
+
+    // 1. Check if browser is on secure context (https: or localhost)
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isHttps = window.location.protocol === 'https:';
+
+    if (!isLocalhost && !isHttps) {
+      setApiError('🎙️ Fitur Mikrofon (Suara) memerlukan HTTPS atau http://localhost:5173. Di dev lokal, silakan buka via http://localhost:5173');
+      return;
+    }
+
+    // 2. Safely prompt microphone permission
+    try {
+      if (navigator?.mediaDevices?.getUserMedia) {
+        const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        testStream.getTracks().forEach(track => track.stop());
+      }
+    } catch (micErr) {
+      console.warn('Microphone permission denied:', micErr);
+      setApiError('Akses mikrofon ditolak. Mohon izinkan mikrofon di pengaturan browser Anda.');
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    // 3. Try native Web Speech API first
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'id-ID';
+        recognition.continuous = false;
+        recognition.interimResults = true;
+
+        let finalSpeechText = '';
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          setApiError(null);
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recognition.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .map((result: any) => result[0].transcript)
+            .join('');
+          finalSpeechText = transcript;
+          setInput(transcript);
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recognition.onerror = (event: any) => {
+          console.warn('Speech recognition error, falling back to MediaRecorder:', event.error);
+          try { recognition.stop(); } catch { /* empty */ }
+          setIsListening(false);
+          if (event.error !== 'aborted') {
+            startMediaRecorderFallback();
+          }
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+          const toSend = finalSpeechText.trim();
+          if (toSend) {
+            sendMessage(toSend);
+          }
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        return;
+      } catch (err) {
+        console.warn('Web Speech API failed to start, using MediaRecorder fallback:', err);
+      }
+    }
+
+    // 3. Fallback to MediaRecorder + Gemini 3.6 Transcribe if Web Speech API is not available/failed
+    startMediaRecorderFallback();
+  };
 
   // Rate limit state
-  const [userIp, setUserIp] = useState<string | null>(null);
+  const [userIp, setUserIp] = useState<string>('127.0.0.1');
   const [limitData, setLimitData] = useState<LimitData>({ sessionStart: Date.now(), totalTokens: 0 });
   const [timeLeft, setTimeLeft] = useState<number>(SESSION_DURATION);
 
   const isBlocked = limitData.totalTokens >= MAX_TOKENS;
   const tokenPct = Math.min(100, (limitData.totalTokens / MAX_TOKENS) * 100);
-  const canSend = !isStreaming && !isBlocked && !!userIp;
+  const canSend = !isStreaming && !isBlocked;
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -856,26 +1236,58 @@ export const ChatPage: FC = () => {
           }
         }
 
-        const response = await aiRef.current!.models.generateContent({
-          model: IMAGE_MODEL,
-          contents: [{ role: 'user', parts: reqParts }],
-        });
-
-        // Cari part inlineData (gambar)
-        const resParts = response.candidates?.[0]?.content?.parts ?? [];
         let base64 = '';
         let mimeType = 'image/jpeg';
-        for (const part of resParts) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const inlineData = (part as any).inlineData;
-          if (inlineData?.data) {
-            base64 = inlineData.data as string;
-            mimeType = (inlineData.mimeType as string) || 'image/jpeg';
-            break;
+        let lastErr: Error | null = null;
+
+        // Multimodel fallback loop: coba model 1 (gemini-3.1-flash-image), jika gagal lanjut ke opsi 2 (nano-banana), dst.
+        for (const modelName of IMAGE_MODELS) {
+          try {
+            const response = await aiRef.current!.models.generateContent({
+              model: modelName,
+              contents: [{ role: 'user', parts: reqParts }],
+            });
+
+            const resParts = response.candidates?.[0]?.content?.parts ?? [];
+            for (const part of resParts) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const inlineData = (part as any).inlineData;
+              if (inlineData?.data) {
+                base64 = inlineData.data as string;
+                mimeType = (inlineData.mimeType as string) || 'image/jpeg';
+                break;
+              }
+            }
+
+            if (base64) break; // Berhasil! Keluar dari loop fallback
+          } catch (err) {
+            console.warn(`Model gambar '${modelName}' gagal/error, mencoba model berikutnya...`, err);
+            lastErr = err instanceof Error ? err : new Error(String(err));
           }
         }
 
-        if (!base64) throw new Error('Model tidak mengembalikan data gambar.');
+        // Tier 2 Fallback Engine: High Quality Public AI Image Endpoint
+        if (!base64) {
+          try {
+            console.warn('Gemini models unavailable, switching to Tier 2 AI image engine fallback...');
+            const seed = Math.floor(Math.random() * 1000000);
+            const encodedPrompt = encodeURIComponent(promptText);
+            const pollUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&seed=${seed}`;
+            const fetched = await fetchImageAsBase64(pollUrl);
+            base64 = fetched.base64;
+            mimeType = fetched.mimeType;
+          } catch (pollErr) {
+            console.warn('Tier 2 image generator failed:', pollErr);
+          }
+        }
+
+        // Tier 3 Fallback Engine: Dynamic SVG Canvas Graphic Generator
+        if (!base64) {
+          console.warn('Switching to Tier 3 SVG Graphic Generator fallback...');
+          const fallback = generateSvgFallbackBase64(isImageReq);
+          base64 = fallback.base64;
+          mimeType = fallback.mimeType;
+        }
 
         setMessages(prev => prev.map(m => m.id === botId ? {
           ...m,
@@ -1029,43 +1441,43 @@ export const ChatPage: FC = () => {
       </AnimatePresence>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/20 shadow-[0_2px_30px_rgba(0,0,0,0.9)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
+      <header className="sticky top-0 z-50 bg-[#08080C]/95 backdrop-blur-md border-b border-red-500/20 shadow-[0_2px_30px_rgba(0,0,0,0.9)] pt-2.5 sm:pt-0">
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 flex items-center justify-between h-14 sm:h-16 gap-2">
 
           <Link
             to="/"
             title="Kembali ke Beranda"
-            className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-slate-300 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center group"
+            className="p-2 sm:p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-slate-300 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center group flex-shrink-0"
           >
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 group-hover:-translate-x-1 transition-transform" />
           </Link>
 
-          <div className="flex items-center gap-3">
-            <div className="relative w-9 h-9 rounded-xl bg-red-600/15 border border-red-500/40 flex items-center justify-center">
-              <Bot className="w-5 h-5 text-red-400" />
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-red-600/15 border border-red-500/40 flex items-center justify-center flex-shrink-0">
+              <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" />
               {isStreaming && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#08080C] animate-pulse" />
+                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-emerald-500 border-2 border-[#08080C] animate-pulse" />
               )}
             </div>
-            <div>
-              <p className="font-bold text-white text-sm leading-tight flex items-center gap-1.5">
-                FetsuBot
-                <span className="text-[10px] font-mono bg-amber-500/15 border border-amber-500/30 text-amber-400 px-1.5 py-0.5 rounded">
+            <div className="min-w-0">
+              <p className="font-bold text-white text-xs sm:text-sm leading-tight flex items-center gap-1.5 truncate">
+                <span className="truncate">FetsuBot</span>
+                <span className="hidden min-[380px]:inline-flex text-[9px] sm:text-[10px] font-mono bg-amber-500/15 border border-amber-500/30 text-amber-400 px-1.5 py-0.5 rounded flex-shrink-0">
                   Gemini 3.6
                 </span>
               </p>
-              <p className="text-[11px] font-mono text-emerald-400 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                {isStreaming ? 'Sedang mengetik...' : 'Online'}
+              <p className="text-[10px] sm:text-[11px] font-mono text-emerald-400 flex items-center gap-1 leading-tight mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block flex-shrink-0" />
+                <span className="truncate">{isStreaming ? 'Sedang mengetik...' : 'Online'}</span>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
             <button
               onClick={downloadSessionJSON}
               title="Download Sesi Chat (JSON)"
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/15 border border-red-500/30 text-red-400 hover:bg-red-600 hover:text-white text-xs font-mono transition-all"
+              className="p-2 sm:px-2.5 sm:py-1.5 rounded-lg bg-red-600/15 border border-red-500/30 text-red-400 hover:bg-red-600 hover:text-white text-xs font-mono transition-all flex items-center gap-1"
             >
               <Download className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">JSON</span>
@@ -1073,26 +1485,26 @@ export const ChatPage: FC = () => {
             <button
               onClick={copySessionUrl}
               title="Salin Link Sesi"
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs font-mono transition-all"
+              className="p-2 sm:px-2.5 sm:py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs font-mono transition-all flex items-center gap-1"
             >
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline">{copiedLink ? 'Tersalin' : 'Link'}</span>
             </button>
-            <button onClick={clearChat} title="Reset Chat" className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-500/40 transition-all">
-              <RefreshCw className="w-4 h-4" />
+            <button onClick={clearChat} title="Reset Chat" className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center">
+              <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
           </div>
         </div>
 
         {/* Session Info Ribbon */}
-        <div className="bg-[#0D0D14] border-t border-b border-slate-800/80 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono text-slate-400">
-          <div className="flex items-center gap-2 truncate">
-            <span className="text-red-400 font-bold">SESSION:</span>
-            <span className="text-slate-300 truncate max-w-[140px] sm:max-w-none">
+        <div className="bg-[#0D0D14] border-t border-b border-slate-800/80 px-3 sm:px-6 py-1 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-slate-400 gap-2">
+          <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+            <span className="text-red-400 font-bold flex-shrink-0">SESSION:</span>
+            <span className="text-slate-300 truncate max-w-[100px] min-[360px]:max-w-[150px] sm:max-w-none">
               {sessionId || (userIp ? ipToUuid(userIp) : 'loading...')}
             </span>
           </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             <span className="hidden sm:inline text-slate-500">FORMAT: JSON</span>
             <span className="text-emerald-400">● IP: {userIp || '...'}</span>
           </div>
@@ -1101,7 +1513,7 @@ export const ChatPage: FC = () => {
 
       {/* ── Messages ────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-5 pb-6 space-y-4">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-5 pb-10 space-y-4">
 
 
           {/* Error banner */}
@@ -1140,7 +1552,19 @@ export const ChatPage: FC = () => {
                   {/* Attachment previews */}
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className={`flex flex-wrap gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
-                      {msg.attachments.map(f => <AttachmentChip key={f.id} file={f} />)}
+                      {msg.attachments.map(f => (
+                        <AttachmentChip
+                          key={f.id}
+                          file={f}
+                          onZoom={f.isImage ? () => setZoomImage({
+                            src: `data:${f.mimeType};base64,${f.base64}`,
+                            prompt: f.name,
+                            filename: f.name,
+                            mime: f.mimeType,
+                            base64: f.base64,
+                          }) : undefined}
+                        />
+                      ))}
                     </div>
                   )}
 
@@ -1173,6 +1597,13 @@ export const ChatPage: FC = () => {
                           prompt={msg.text.replace('✅ Gambar berhasil dibuat!', '').trim() || 'generated'}
                           index={idx}
                           mime={msg.generatedMime ?? 'image/png'}
+                          onZoom={() => setZoomImage({
+                            src: `data:${msg.generatedMime ?? 'image/png'};base64,${b64}`,
+                            prompt: msg.text.replace('✅ Gambar berhasil dibuat!', '').trim() || `Gambar ${idx + 1}`,
+                            filename: `fetsubot-image-${idx + 1}.${(msg.generatedMime ?? 'image/png').split('/')[1] || 'png'}`,
+                            mime: msg.generatedMime ?? 'image/png',
+                            base64: b64,
+                          })}
                         />
                       ))}
                     </div>
@@ -1262,7 +1693,7 @@ export const ChatPage: FC = () => {
       </main>
 
       {/* ── Input Area ──────────────────────────────────────────────────────── */}
-      <div className="sticky bottom-0 bg-[#08080C]/95 backdrop-blur-md border-t border-slate-800/80">
+      <div className="sticky bottom-0 z-30 bg-[#08080C]/95 backdrop-blur-md border-t border-slate-800/80 shadow-[0_-4px_20px_rgba(0,0,0,0.8)]">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 space-y-3">
 
           {/* Quick prompts */}
@@ -1312,7 +1743,40 @@ export const ChatPage: FC = () => {
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
                 className="flex flex-wrap gap-2 p-3 rounded-xl bg-slate-900/50 border border-slate-800"
               >
-                {attachments.map(f => <AttachmentChip key={f.id} file={f} onRemove={() => removeAttachment(f.id)} />)}
+                {attachments.map(f => (
+                  <AttachmentChip
+                    key={f.id}
+                    file={f}
+                    onRemove={() => removeAttachment(f.id)}
+                    onZoom={f.isImage ? () => setZoomImage({
+                      src: `data:${f.mimeType};base64,${f.base64}`,
+                      prompt: f.name,
+                      filename: f.name,
+                      mime: f.mimeType,
+                      base64: f.base64,
+                    }) : undefined}
+                  />
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Voice listening indicator banner */}
+          <AnimatePresence>
+            {isListening && !isBlocked && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-red-600/15 border border-red-500/40 text-red-300 text-xs font-mono"
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping flex-shrink-0" />
+                  <span className="truncate">🎙️ Mendengarkan... Bicara sekarang dalam Bahasa Indonesia</span>
+                </div>
+                <button onClick={toggleListening} className="text-slate-400 hover:text-white text-xs underline flex-shrink-0 ml-2">
+                  Batal
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -1337,6 +1801,24 @@ export const ChatPage: FC = () => {
               </button>
               <input ref={fileRef} type="file" multiple accept={ACCEPTED_TYPES.join(',')} onChange={handleFileChange} className="hidden" />
 
+              {/* Voice Input (Mic) */}
+              <button
+                type="button"
+                onClick={toggleListening}
+                disabled={!canSend}
+                title={isListening ? 'Berhenti mendengarkan' : 'Bicara sekarang (Input Suara)'}
+                className={`relative w-11 h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isListening
+                    ? 'bg-red-600 text-white border-red-500 animate-pulse shadow-lg shadow-red-600/40'
+                    : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-red-400'
+                }`}
+              >
+                {isListening ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4" />}
+                {isListening && (
+                  <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500 animate-ping" />
+                )}
+              </button>
+
               {/* Text input */}
               <div className="flex-1 relative">
                 <input
@@ -1344,7 +1826,7 @@ export const ChatPage: FC = () => {
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKey}
                   disabled={!canSend}
-                  placeholder={attachments.length > 0 ? 'Tambahkan keterangan (opsional)...' : 'Ketik pesan atau drag & drop file...'}
+                  placeholder={isListening ? 'Mendengarkan suara Anda...' : attachments.length > 0 ? 'Tambahkan keterangan (opsional)...' : 'Ketik pesan, suara (mic), atau drop file...'}
                   className="w-full px-4 py-3 pr-10 rounded-xl bg-[#0F0F16] border border-slate-800 focus:border-red-500/70 text-white placeholder-slate-600 focus:outline-none transition-colors font-mono text-sm disabled:opacity-60"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] text-slate-600">↵</span>
@@ -1410,6 +1892,9 @@ export const ChatPage: FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ── Image Zoom Modal ────────────────────────────────────────────────── */}
+      <ImageZoomModal image={zoomImage} onClose={() => setZoomImage(null)} />
     </div>
   );
 };

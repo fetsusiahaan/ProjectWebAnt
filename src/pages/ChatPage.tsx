@@ -8,7 +8,7 @@ import {
   RefreshCw, ChevronRight, Paperclip,
   X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
-  ZoomIn, ZoomOut, Mic, MicOff,
+  ZoomIn, ZoomOut, Mic, MicOff, MapPin, Compass, Navigation, ExternalLink,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -42,6 +42,16 @@ interface AttachedFile {
   isImage: boolean;
 }
 
+export interface LocationData {
+  query: string;
+  title: string;
+  address?: string;
+  photoUrl?: string;
+  mapEmbedUrl: string;
+  googleMapsUrl: string;
+  directionsUrl: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'bot';
@@ -53,7 +63,184 @@ interface Message {
   generatedImages?: string[];   // base64 dari Gemini Image Generation
   generatedMime?: string;       // MIME type gambar (image/png, image/jpeg, dll)
   isImageGeneration?: boolean;  // flag: sedang generate gambar
+  locationData?: LocationData;  // data lokasi Google Maps & foto tempat
 }
+
+// ─── Location & Google Maps Helpers ─────────────────────────────────────────
+function detectLocationQuery(text: string): string | null {
+  if (!text) return null;
+  const cleanText = text.trim();
+
+  // Pattern 1: Keywords like "lokasi X", "google maps X", "peta X", "alamat X", "dimana X", "posisi X", "rute ke X"
+  const keywordPattern = /(?:lokasi|peta|maps|google maps|alamat|rute ke|posisi|dimana|di mana|tempat)\s+(?:di\s+)?([a-zA-Z0-9\s,.-]{3,60})/i;
+  const match = cleanText.match(keywordPattern);
+  if (match && match[1]) {
+    const res = match[1].replace(/(\?|\!|\.|\,)$/, '').trim();
+    if (res.length >= 3 && !['kamu', 'apa', 'siapa', 'ini', 'itu', 'saya', 'dia', 'anda'].includes(res.toLowerCase())) {
+      return res;
+    }
+  }
+
+  // Pattern 2: Well-known places, cities or landmarks explicitly mentioned
+  const landmarkPattern = /(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk)/i;
+  const lmMatch = cleanText.match(landmarkPattern);
+  if (lmMatch && lmMatch[1]) {
+    return lmMatch[1].trim();
+  }
+
+  return null;
+}
+
+/**
+ * Resolves context when user sends follow-up requests like "carikan fotonya", "mana fotonya"
+ */
+function resolveContextualSubject(userText: string, messageHistory: Message[]): string {
+  const clean = userText.trim();
+  const lower = clean.toLowerCase();
+
+  const isFollowUp = /^(carikan|mana|tampilkan|minta|lihat|kirim|apakah ada)\s+(foto|gambar|peta|lokasi|fotonya|gambarnya|petanya|lokasinya)\b/i.test(lower) ||
+    /^(foto|gambar|peta|lokasi|fotonya|gambarnya)$/i.test(lower);
+
+  if (!isFollowUp) {
+    return userText;
+  }
+
+  // Search recent history for active topic/location
+  for (let i = messageHistory.length - 1; i >= 0; i--) {
+    const m = messageHistory[i];
+
+    if (m.locationData?.title) {
+      return m.locationData.title;
+    }
+
+    const loc = detectLocationQuery(m.text);
+    if (loc) {
+      return loc;
+    }
+
+    const lm = m.text.match(/(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk)/i);
+    if (lm && lm[1]) {
+      return lm[1];
+    }
+  }
+
+  return userText;
+}
+
+function buildLocationData(query: string): LocationData {
+  const encoded = encodeURIComponent(query);
+  const mapEmbedUrl = `https://maps.google.com/maps?q=${encoded}&t=&z=15&ie=UTF8&iwloc=&output=embed`;
+  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encoded}`;
+  
+  // Deterministic seed for Pollinations AI location photo generator
+  const seed = Math.abs(query.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0));
+  const photoUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(`real photography of ${query} place google maps location view`)}?width=800&height=500&nologo=true&seed=${seed}`;
+
+  return {
+    query,
+    title: query.charAt(0).toUpperCase() + query.slice(1),
+    address: `Lokasi Referensi Google Maps untuk "${query}"`,
+    photoUrl,
+    mapEmbedUrl,
+    googleMapsUrl,
+    directionsUrl,
+  };
+}
+
+// ─── Google Maps Card Component ─────────────────────────────────────────────
+const GoogleMapsCard: FC<{
+  location: LocationData;
+  onZoomImage?: (photoUrl: string, title: string) => void;
+}> = ({ location, onZoomImage }) => {
+  const [showMap, setShowMap] = useState(true);
+
+  return (
+    <div className="my-3 rounded-2xl overflow-hidden border border-slate-700/80 bg-[#09090F] shadow-xl max-w-full min-w-0">
+      {/* Header Bar */}
+      <div className="px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 truncate">
+          <div className="p-1.5 rounded-lg bg-red-600/15 border border-red-500/30 text-red-400 flex-shrink-0">
+            <MapPin className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-bold text-white truncate">{location.title}</p>
+            <p className="text-[10px] font-mono text-slate-400 truncate">{location.address}</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowMap(prev => !prev)}
+          className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 hover:text-white text-xs font-mono transition-all flex items-center gap-1 flex-shrink-0"
+        >
+          <Compass className="w-3 h-3 text-red-400" />
+          <span>{showMap ? 'Sembunyikan Peta' : 'Tampilkan Peta'}</span>
+        </button>
+      </div>
+
+      {/* 1. Foto Tempat (Selalu Tampil di Atas) */}
+      {location.photoUrl && (
+        <div
+          onClick={() => onZoomImage?.(location.photoUrl!, location.title)}
+          className="relative group cursor-pointer overflow-hidden h-52 sm:h-60 bg-slate-950"
+          title="Klik untuk Zoom Foto Tempat"
+        >
+          <img
+            src={location.photoUrl}
+            alt={location.title}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          />
+          <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs">
+            <ZoomIn className="w-5 h-5 text-red-400" />
+            <span>Klik untuk Zoom Foto Tempat</span>
+          </div>
+          <div className="absolute top-2 left-2 px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md border border-white/10 text-[10px] font-mono text-white flex items-center gap-1.5 shadow-md">
+            <Sparkles className="w-3 h-3 text-red-400" />
+            <span>🖼️ Foto Referensi Tempat</span>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Peta Google Maps Interaktif (Di Bawah Foto) */}
+      {showMap && (
+        <div className="w-full h-48 sm:h-56 overflow-hidden relative border-t border-slate-800">
+          <iframe
+            title={`Google Maps ${location.title}`}
+            src={location.mapEmbedUrl}
+            className="w-full h-full border-0"
+            loading="lazy"
+            allowFullScreen
+          />
+        </div>
+      )}
+
+      {/* Footer Buttons */}
+      <div className="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+        <a
+          href={location.googleMapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white text-xs font-semibold shadow-md transition-all active:scale-95 text-center whitespace-nowrap"
+        >
+          <Compass className="w-3.5 h-3.5" />
+          <span>Buka di Google Maps</span>
+          <ExternalLink className="w-3 h-3 opacity-80" />
+        </a>
+
+        <a
+          href={location.directionsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-all active:scale-95 text-center whitespace-nowrap"
+        >
+          <Navigation className="w-3.5 h-3.5 text-red-400" />
+          <span>Petunjuk Arah</span>
+        </a>
+      </div>
+    </div>
+  );
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fileToBase64(file: File): Promise<string> {
@@ -1210,6 +1397,7 @@ export const ChatPage: FC = () => {
     setIsStreaming(true);
 
     // ── Image generation & modification branch ──────────────────────────────
+    const contextualSubject = resolveContextualSubject(msgText, messages);
     const attachedImage = snapshot.find(f => f.isImage);
     const extractedPrompt = extractImagePrompt(msgText);
     const isImageReq = attachedImage
@@ -1219,16 +1407,24 @@ export const ChatPage: FC = () => {
     if (isImageReq) {
       const botId = `b-${Date.now()}`;
       setIsGeneratingImage(true);
+
+      const resolvedLocQuery = detectLocationQuery(contextualSubject) || detectLocationQuery(msgText);
+      const locData = resolvedLocQuery ? buildLocationData(resolvedLocQuery) : undefined;
+
       setMessages(prev => [...prev, {
         id: botId, role: 'bot', text: '', timestamp: new Date(),
         isStreaming: true, isImageGeneration: true,
+        locationData: locData,
       }]);
 
       try {
         let promptText = isImageReq;
-        if (/logo|lambang|simbol|brand/i.test(isImageReq) || /logo|lambang|simbol|brand/i.test(msgText)) {
+        if (/carikan fotonya|mana fotonya|tampilkan foto|lihat foto|foto tempat/i.test(promptText) || promptText.length < 15) {
+          promptText = `Real high resolution photograph of ${contextualSubject} landmark Indonesia`;
+        } else if (/logo|lambang|simbol|brand/i.test(isImageReq) || /logo|lambang|simbol|brand/i.test(msgText)) {
           promptText = `Professional logo design: ${isImageReq}. Clean vector graphic, high resolution, minimalist modern logo aesthetic, solid white background, iconic branding.`;
         }
+
         const reqParts: Part[] = [{ text: promptText }];
         for (const f of snapshot) {
           if (f.isImage) {
@@ -1284,18 +1480,19 @@ export const ChatPage: FC = () => {
         // Tier 3 Fallback Engine: Dynamic SVG Canvas Graphic Generator
         if (!base64) {
           console.warn('Switching to Tier 3 SVG Graphic Generator fallback...');
-          const fallback = generateSvgFallbackBase64(isImageReq);
+          const fallback = generateSvgFallbackBase64(contextualSubject);
           base64 = fallback.base64;
           mimeType = fallback.mimeType;
         }
 
         setMessages(prev => prev.map(m => m.id === botId ? {
           ...m,
-          text: attachedImage ? '✅ Gambar berhasil dimodifikasi!' : '✅ Gambar berhasil dibuat!',
+          text: attachedImage ? '✅ Gambar berhasil dimodifikasi!' : `✅ Foto ${contextualSubject} berhasil dibuat!`,
           generatedImages: [base64],
           generatedMime: mimeType,
           isStreaming: false,
           isImageGeneration: false,
+          locationData: locData || m.locationData,
         } : m));
 
         const added = estimateTokens(isImageReq) + 200;
@@ -1369,6 +1566,13 @@ export const ChatPage: FC = () => {
           saveLimit(userIp!, updated);
           return updated;
         });
+
+        // Detect location query and attach Google Maps Location Card
+        const locQuery = detectLocationQuery(msgText) || detectLocationQuery(fullText);
+        if (locQuery) {
+          const locData = buildLocationData(locQuery);
+          setMessages(prev => prev.map(m => m.id === botId ? { ...m, locationData: locData } : m));
+        }
       }
 
     } catch (err) {
@@ -1606,6 +1810,22 @@ export const ChatPage: FC = () => {
                           })}
                         />
                       ))}
+                    </div>
+                  )}
+
+                  {/* Google Maps Location Card */}
+                  {msg.locationData && (
+                    <div className="w-full max-w-full sm:max-w-md">
+                      <GoogleMapsCard
+                        location={msg.locationData}
+                        onZoomImage={(photoUrl, title) =>
+                          setZoomImage({
+                            src: photoUrl,
+                            prompt: title,
+                            filename: `${title.toLowerCase().replace(/\s+/g, '-')}-location.jpg`,
+                          })
+                        }
+                      />
                     </div>
                   )}
 

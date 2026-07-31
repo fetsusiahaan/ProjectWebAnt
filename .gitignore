@@ -25,3 +25,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+/nssm-2.24
+nssm-2.24.zip
+nssm.exe

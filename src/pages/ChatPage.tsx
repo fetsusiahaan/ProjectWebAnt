@@ -12,33 +12,14 @@ import {
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
 import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../utils/session';
+import { CHAT_CONFIG, SYSTEM_INSTRUCTION } from '../config/chatConfig';
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-const MODEL = 'gemini-3.6-flash';
-const IMAGE_MODEL = 'gemini-3.1-flash-image';
-
-const SYSTEM_INSTRUCTION = `Kamu adalah FetsuBot, asisten virtual dari Fetsu Siahaan — seorang Software Engineer, Backend Developer, dan Solution Architect asal Indonesia.
-
-Tugasmu membantu pengunjung website portfolio Fetsu menjawab pertanyaan seputar:
-- Keahlian & tech stack (Go, Rust, Python, TypeScript, React, dll.)
-- Layanan yang ditawarkan (REST API, Web App, Cloud Architecture, dll.)
-- Proyek, portofolio, dan pengalaman Fetsu
-- Cara menghubungi Fetsu & estimasi harga/waktu
-
-Info penting tentang Fetsu:
-- 📧 Email: fettsu@gmail.com
-- 💼 LinkedIn: linkedin.com/in/fetsu-siahaan
-- 🐙 GitHub: github.com/fetsusiahaan
-- 🔧 Tech utama: Go (Golang), Rust, Python, TypeScript, React, Next.js
-- 🏗️ Spesialisasi: REST API enterprise, microservices, cloud-native architecture
-- ⚡ Performa API: 14.000+ req/sec, latency P99 < 12ms, uptime 99.998%
-- 🛡️ Stack favorit: Go + PostgreSQL + Redis + Docker/Kubernetes
-- ☁️ Cloud: AWS, GCP, Terraform, Prometheus, Grafana
-- 💰 Harga: fleksibel, hubungi langsung untuk estimasi
-
-Jika ada gambar atau file yang dikirim, analisis dengan cermat dan berikan respons yang relevan.
-Gunakan bahasa Indonesia yang ramah, profesional, dan ringkas. Gunakan emoji secukupnya.`;
+const API_KEY = CHAT_CONFIG.apiKey;
+const MODEL = CHAT_CONFIG.model;
+const IMAGE_MODEL = CHAT_CONFIG.imageModel;
+const ACCEPTED_TYPES = CHAT_CONFIG.acceptedFileTypes;
+const MAX_TOKENS = CHAT_CONFIG.maxTokens;
+const SESSION_DURATION = CHAT_CONFIG.sessionDurationMs;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Part {
@@ -89,15 +70,7 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const ACCEPTED_TYPES = [
-  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-  'application/pdf',
-  'text/plain', 'text/csv', 'text/markdown', 'application/json',
-];
-
 // ─── Rate Limit Config ───────────────────────────────────────────────────
-const MAX_TOKENS = 4000;
-const SESSION_DURATION = 15 * 60 * 1000; // 15 minutes
 
 interface LimitData {
   sessionStart: number;
@@ -186,26 +159,109 @@ function downloadBase64Image(base64: string, filename: string, mime = 'image/jpe
 }
 
 
-// ─── Markdown Renderer (Claude-style) ───────────────────────────────────────
+// ─── Markdown Renderer (Full Specification) ──────────────────────────────────
 
-// Parse inline: **bold**, *italic*, `code`
+// Parse inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url), raw URLs, emails
 function parseInline(text: string): ReactNode[] {
   const result: ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
-  let last = 0, match: RegExpExecArray | null;
+  // Match order: 
+  // 1. [label](url)
+  // 2. email address
+  // 3. raw https?:// url
+  // 4. raw domain url (www. or github.com/)
+  // 5. **bold**
+  // 6. *italic*
+  // 7. ~~strikethrough~~
+  // 8. `code`
+  const regex = /(\[([^\]]+)\]\(([^)\s]+)\)|([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|(https?:\/\/[^\s<)"']+)|((?:www\.|github\.com\/)[^\s<)"']+)|(\*\*(.+?)\*\*)|(\*(.+?)\*)|(~~(.+?)~~)|(`([^`]+)`))/gi;
+
+  let last = 0;
+  let match: RegExpExecArray | null;
   let key = 0;
+
   while ((match = regex.exec(text)) !== null) {
-    if (match.index > last) result.push(<span key={key++}>{text.slice(last, match.index)}</span>);
-    if (match[2]) result.push(<strong key={key++} className="text-white font-semibold">{match[2]}</strong>);
-    else if (match[3]) result.push(<em key={key++} className="italic text-slate-200">{match[3]}</em>);
-    else if (match[4]) result.push(
-      <code key={key++} className="px-1.5 py-0.5 mx-0.5 rounded-md bg-slate-800 border border-slate-700/80 text-red-300 font-mono text-[0.82em] align-middle">
-        {match[4]}
-      </code>
-    );
-    last = match.index + match[0].length;
+    if (match.index > last) {
+      result.push(<span key={key++}>{text.slice(last, match.index)}</span>);
+    }
+
+    const [full, , mdLabel, mdUrl, email, rawUrl, domainUrl, , boldText, , italicText, , strikeText, , codeText] = match;
+
+    if (mdLabel && mdUrl) {
+      // 1. Markdown link [label](url)
+      const targetUrl = mdUrl.startsWith('http://') || mdUrl.startsWith('https://') || mdUrl.startsWith('mailto:')
+        ? mdUrl
+        : `https://${mdUrl}`;
+
+      result.push(
+        <a
+          key={key++}
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+        >
+          {parseInline(mdLabel)}
+        </a>
+      );
+    } else if (email) {
+      // 2. Email address
+      result.push(
+        <a
+          key={key++}
+          href={`mailto:${email}`}
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+        >
+          {email}
+        </a>
+      );
+    } else if (rawUrl) {
+      // 3. Raw HTTP/HTTPS URL
+      result.push(
+        <a
+          key={key++}
+          href={rawUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+        >
+          {rawUrl}
+        </a>
+      );
+    } else if (domainUrl) {
+      // 4. Raw domain URL
+      const targetUrl = domainUrl.startsWith('www.') ? `https://${domainUrl}` : `https://${domainUrl}`;
+      result.push(
+        <a
+          key={key++}
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer relative z-10 inline"
+        >
+          {domainUrl}
+        </a>
+      );
+    } else if (boldText) {
+      result.push(<strong key={key++} className="text-white font-semibold">{parseInline(boldText)}</strong>);
+    } else if (italicText) {
+      result.push(<em key={key++} className="italic text-slate-200">{parseInline(italicText)}</em>);
+    } else if (strikeText) {
+      result.push(<del key={key++} className="line-through text-slate-400">{parseInline(strikeText)}</del>);
+    } else if (codeText) {
+      result.push(
+        <code key={key++} className="px-1.5 py-0.5 mx-0.5 rounded-md bg-slate-800 border border-slate-700/80 text-red-300 font-mono text-[0.82em] align-middle">
+          {codeText}
+        </code>
+      );
+    }
+
+    last = match.index + full.length;
   }
-  if (last < text.length) result.push(<span key={key++}>{text.slice(last)}</span>);
+
+  if (last < text.length) {
+    result.push(<span key={key++}>{text.slice(last)}</span>);
+  }
+
   return result;
 }
 
@@ -342,33 +398,122 @@ function renderMarkdown(text: string): ReactNode[] {
 
   return segments.map((seg, si) => {
     if (seg.type === 'code') {
-      return <CodeBlock key={si} lang={seg.lang!} code={seg.content} />;
+      return <CodeBlock key={`cb-${si}`} lang={seg.lang!} code={seg.content} />;
     }
 
-    // Text segment: parse line by line
     const lines = seg.content.split('\n');
     const nodes: ReactNode[] = [];
     let i = 0;
+
     while (i < lines.length) {
       const line = lines[i];
 
+      // Markdown Table parsing
+      if (line.trim().startsWith('|')) {
+        const tableLines: string[] = [];
+        let tIdx = i;
+        while (tIdx < lines.length && lines[tIdx].trim().startsWith('|')) {
+          tableLines.push(lines[tIdx].trim());
+          tIdx++;
+        }
+
+        if (tableLines.length >= 2) {
+          const parseRow = (l: string) => l.split('|').slice(1, -1).map(c => c.trim());
+          const headers = parseRow(tableLines[0]);
+          const isSeparator = /^\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)*\|?$/.test(tableLines[1]);
+          const dataRows = (isSeparator ? tableLines.slice(2) : tableLines.slice(1)).map(parseRow);
+
+          nodes.push(
+            <div key={`${si}-tbl-${i}`} className="my-3 overflow-x-auto rounded-xl border border-slate-700/80 bg-[#09090F] shadow-lg">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-800/90 border-b border-slate-700 text-red-400 font-mono">
+                    {headers.map((h, hIdx) => (
+                      <th key={hIdx} className="px-3.5 py-2 font-bold uppercase tracking-wider">
+                        {parseInline(h)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-200">
+                  {dataRows.map((row, rIdx) => (
+                    <tr key={rIdx} className="hover:bg-slate-800/40 transition-colors">
+                      {row.map((cell, cIdx) => (
+                        <td key={cIdx} className="px-3.5 py-2.5 leading-relaxed">
+                          {parseInline(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+          i = tIdx;
+          continue;
+        }
+      }
+
       // H1
       if (/^# (.+)/.test(line)) {
-        nodes.push(<p key={`${si}-${i}`} className="text-base font-bold text-white mt-3 mb-1">{parseInline(line.slice(2))}</p>);
+        nodes.push(<p key={`${si}-${i}`} className="text-lg font-extrabold text-white mt-3 mb-1">{parseInline(line.slice(2))}</p>);
         i++; continue;
       }
       // H2
       if (/^## (.+)/.test(line)) {
-        nodes.push(<p key={`${si}-${i}`} className="text-sm font-bold text-white mt-2 mb-1">{parseInline(line.slice(3))}</p>);
+        nodes.push(<p key={`${si}-${i}`} className="text-base font-bold text-white mt-2.5 mb-1">{parseInline(line.slice(3))}</p>);
         i++; continue;
       }
       // H3
       if (/^### (.+)/.test(line)) {
-        nodes.push(<p key={`${si}-${i}`} className="text-sm font-semibold text-slate-200 mt-1.5 mb-0.5">{parseInline(line.slice(4))}</p>);
+        nodes.push(<p key={`${si}-${i}`} className="text-sm font-bold text-slate-200 mt-2 mb-0.5">{parseInline(line.slice(4))}</p>);
+        i++; continue;
+      }
+      // H4+
+      if (/^####+ (.+)/.test(line)) {
+        nodes.push(<p key={`${si}-${i}`} className="text-xs font-bold text-slate-300 uppercase tracking-wider mt-1.5 mb-0.5">{parseInline(line.replace(/^#+\s*/, ''))}</p>);
         i++; continue;
       }
 
-      // Bullet list block
+      // Blockquotes (> Quote)
+      if (/^> (.+)/.test(line)) {
+        const quoteLines: string[] = [];
+        while (i < lines.length && /^> /.test(lines[i])) {
+          quoteLines.push(lines[i].slice(2));
+          i++;
+        }
+        nodes.push(
+          <blockquote key={`${si}-bq-${i}`} className="border-l-4 border-red-500 bg-red-950/20 pl-3.5 py-1.5 my-2 rounded-r-lg italic text-slate-300 text-xs sm:text-sm">
+            {quoteLines.map((ql, qIdx) => (
+              <p key={qIdx}>{parseInline(ql)}</p>
+            ))}
+          </blockquote>
+        );
+        continue;
+      }
+
+      // Task List items (- [ ] or - [x])
+      if (/^[-*•] \[(x| )\] /i.test(line)) {
+        const items: ReactNode[] = [];
+        while (i < lines.length && /^[-*•] \[(x| )\] /i.test(lines[i])) {
+          const isChecked = /^[-*•] \[x\] /i.test(lines[i]);
+          const textContent = lines[i].replace(/^[-*•] \[(x| )\] /i, '');
+          items.push(
+            <li key={i} className="flex items-center gap-2 leading-relaxed">
+              <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] font-bold ${isChecked ? 'bg-red-600 border-red-500 text-white' : 'border-slate-600 bg-slate-800 text-transparent'
+                }`}>
+                ✓
+              </span>
+              <span className={isChecked ? 'line-through text-slate-400' : ''}>{parseInline(textContent)}</span>
+            </li>
+          );
+          i++;
+        }
+        nodes.push(<ul key={`${si}-task-${i}`} className="space-y-1.5 my-1.5">{items}</ul>);
+        continue;
+      }
+
+      // Unordered Bullet list block
       if (/^[-*•] /.test(line)) {
         const items: ReactNode[] = [];
         while (i < lines.length && /^[-*•] /.test(lines[i])) {
@@ -401,9 +546,9 @@ function renderMarkdown(text: string): ReactNode[] {
         continue;
       }
 
-      // Horizontal rule
-      if (/^---+$/.test(line.trim())) {
-        nodes.push(<hr key={`${si}-${i}`} className="border-slate-700 my-3" />);
+      // Horizontal rule (---, ***, ___)
+      if (/^(---|[*]{3}|_{3})$/.test(line.trim())) {
+        nodes.push(<hr key={`${si}-${i}`} className="border-slate-700/80 my-3" />);
         i++; continue;
       }
 
@@ -887,10 +1032,12 @@ export const ChatPage: FC = () => {
       <header className="sticky top-0 z-50 bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/20 shadow-[0_2px_30px_rgba(0,0,0,0.9)]">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
 
-          <Link to="/" className="flex items-center gap-2 text-slate-400 hover:text-red-400 transition-colors text-sm font-medium group">
-            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-            <span className="hidden sm:inline">Kembali ke Beranda</span>
-            <span className="sm:hidden">Kembali</span>
+          <Link
+            to="/"
+            title="Kembali ke Beranda"
+            className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-slate-300 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center group"
+          >
+            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
           </Link>
 
           <div className="flex items-center gap-3">
@@ -1010,7 +1157,9 @@ export const ChatPage: FC = () => {
                           {renderMarkdown(msg.text)}
                           {msg.isStreaming && <Cursor />}
                         </>
-                      ) : msg.text}
+                      ) : (
+                        renderMarkdown(msg.text)
+                      )}
                     </div>
                   )}
 

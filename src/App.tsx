@@ -12,6 +12,8 @@ import { Footer } from './components/Footer';
 import { FloatingChatButton } from './components/FloatingChatButton';
 import { ChatPage } from './pages/ChatPage';
 
+import { LoadingScreen } from './components/LoadingScreen';
+
 // ── Home Page ────────────────────────────────────────────────────────────────
 function HomePage() {
   const location = useLocation();
@@ -27,8 +29,12 @@ function HomePage() {
       }, 100);
     }
   }, [location]);
+
   return (
     <div className="min-h-screen bg-[#08080C] text-slate-100 flex flex-col selection:bg-red-600 selection:text-white">
+      {/* 2-Second Bouncing Ball Loading Screen */}
+      <LoadingScreen durationMs={2000} />
+
       {/* Sticky Navigation Bar */}
       <Navbar />
 

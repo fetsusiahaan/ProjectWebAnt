@@ -6,7 +6,7 @@ import {
   Send, ArrowLeft, Bot, User, Zap,
   Shield, Server, Code2, Database, Cloud, Cpu,
   RefreshCw, Activity, ChevronRight, Paperclip,
-  X, ImageIcon, FileText, AlertCircle, StopCircle,
+  X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -26,7 +26,7 @@ Tugasmu membantu pengunjung website portfolio Fetsu menjawab pertanyaan seputar:
 - Cara menghubungi Fetsu & estimasi harga/waktu
 
 Info penting tentang Fetsu:
-- 📧 Email: fetsusiahaan.dev@gmail.com
+- 📧 Email: fettsu@gmail.com
 - 💼 LinkedIn: linkedin.com/in/fetsu-siahaan
 - 🐙 GitHub: github.com/fetsusiahaan
 - 🔧 Tech utama: Go (Golang), Rust, Python, TypeScript, React, Next.js
@@ -135,12 +135,17 @@ function formatMs(ms: number): string {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-// ─── Image Generation Helpers ────────────────────────────────────────────────
+// ─── Image Generation & Modification Helpers ────────────────────────────────
 const IMAGE_KEYWORDS = [
   'buatkan gambar', 'buat gambar', 'bikin gambar', 'generate gambar',
   'gambarkan', 'tolong gambarkan', 'buatin gambar', 'ilustrasikan',
   'create image', 'generate image', 'draw me', 'make image',
   'buatkan foto', 'buat foto', 'bikin foto', 'buat ilustrasi',
+  'edit gambar', 'modifikasi gambar', 'ubah gambar', 'edit foto',
+  'modifikasi foto', 'ubah foto', 'ganti background', 'edit image',
+  'modify image', 'transform image', 'filter gambar', 'style gambar',
+  'ubah warna', 'tambahkan pada gambar', 'perbaiki gambar', 'variasi gambar',
+  'tambahkan', 'tambah', 'edit', 'ubah', 'ganti', 'lukis',
 ];
 
 /** Returns the image prompt if detected, otherwise null */
@@ -150,10 +155,20 @@ function extractImagePrompt(text: string): string | null {
     const idx = lower.indexOf(kw);
     if (idx !== -1) {
       const after = text.slice(idx + kw.length).replace(/^[:\s]+/, '').trim();
-      return after || text; // fallback ke full text jika kosong setelah keyword
+      return after || text;
     }
   }
   return null;
+}
+
+function isImageModifyIntent(text: string): boolean {
+  const lower = text.toLowerCase();
+  const keywords = [
+    'edit', 'ubah', 'modifikasi', 'ganti', 'perbaiki', 'filter',
+    'tambah', 'tambahkan', 'hapus', 'style', 'jadikan', 'variasi', 'revisi', 'transform',
+    'gambar', 'foto', 'image', 'background', 'warna', 'isi', 'isikan', 'lukis',
+  ];
+  return keywords.some(k => lower.includes(k));
 }
 
 function downloadBase64Image(base64: string, filename: string, mime = 'image/jpeg') {
@@ -212,7 +227,25 @@ const GeneratedImageCard: FC<{ base64: string; prompt: string; index: number; mi
   </div>
 );
 
-// Code block with copy button — responsive + scrollable when > 10 lines
+function downloadTextFile(content: string, lang: string) {
+  const extMap: Record<string, string> = {
+    javascript: 'js', js: 'js', jsx: 'jsx', typescript: 'ts', ts: 'ts', tsx: 'tsx',
+    python: 'py', py: 'py', html: 'html', css: 'css', json: 'json',
+    markdown: 'md', md: 'md', sql: 'sql', sh: 'sh', bash: 'sh',
+    rust: 'rs', rs: 'rs', go: 'go', php: 'php', java: 'java',
+    cpp: 'cpp', c: 'c', xml: 'xml', yaml: 'yaml', yml: 'yml',
+  };
+  const ext = extMap[lang.toLowerCase()] || 'txt';
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `modified-file.${ext}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Code block with copy & download buttons — responsive + scrollable when > 10 lines
 const LINE_HEIGHT_PX = 22; // approximate line height in px (matches leading-relaxed @ ~13-14px font)
 const MAX_VISIBLE_LINES = 10;
 
@@ -235,15 +268,25 @@ const CodeBlock: FC<{ lang: string; code: string }> = ({ lang, code }) => {
         <span className="font-mono text-[10px] sm:text-[11px] text-slate-400 tracking-wide uppercase">
           {lang || 'code'}
         </span>
-        <button
-          onClick={copy}
-          className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-400 hover:text-white transition-colors group"
-        >
-          {copied
-            ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
-            : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 group-hover:text-slate-200" />}
-          <span className={copied ? 'text-emerald-400' : ''}>{copied ? 'Copied!' : 'Copy'}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => downloadTextFile(trimmed, lang)}
+            className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-400 hover:text-white transition-colors group"
+            title="Download file"
+          >
+            <Download className="w-3 h-3 sm:w-3.5 sm:h-3.5 group-hover:text-slate-200" />
+            <span>Download</span>
+          </button>
+          <button
+            onClick={copy}
+            className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-400 hover:text-white transition-colors group"
+          >
+            {copied
+              ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
+              : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 group-hover:text-slate-200" />}
+            <span className={copied ? 'text-emerald-400' : ''}>{copied ? 'Copied!' : 'Copy'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Code body — vertical scroll kicks in when > 10 lines */}
@@ -531,9 +574,14 @@ export const ChatPage: FC = () => {
     setAttachments([]);
     setIsStreaming(true);
 
-    // ── Image generation branch ──────────────────────────────────────────────
-    const imagePrompt = snapshot.length === 0 ? extractImagePrompt(msgText) : null;
-    if (imagePrompt) {
+    // ── Image generation & modification branch ──────────────────────────────
+    const attachedImage = snapshot.find(f => f.isImage);
+    const extractedPrompt = extractImagePrompt(msgText);
+    const isImageReq = attachedImage
+      ? (msgText.trim() ? msgText : 'modifikasi gambar ini')
+      : (extractedPrompt || (isImageModifyIntent(msgText) ? msgText : null));
+
+    if (isImageReq) {
       const botId = `b-${Date.now()}`;
       setIsGeneratingImage(true);
       setMessages(prev => [...prev, {
@@ -542,17 +590,23 @@ export const ChatPage: FC = () => {
       }]);
 
       try {
+        const reqParts: Part[] = [{ text: isImageReq }];
+        for (const f of snapshot) {
+          if (f.isImage) {
+            reqParts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
+          }
+        }
+
         const response = await aiRef.current!.models.generateContent({
           model: IMAGE_MODEL,
-          contents: [{ role: 'user', parts: [{ text: imagePrompt }] }],
-          config: { responseModalities: ['IMAGE', 'TEXT'] },
+          contents: [{ role: 'user', parts: reqParts }],
         });
 
         // Cari part inlineData (gambar)
-        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        const resParts = response.candidates?.[0]?.content?.parts ?? [];
         let base64 = '';
         let mimeType = 'image/jpeg';
-        for (const part of parts) {
+        for (const part of resParts) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const inlineData = (part as any).inlineData;
           if (inlineData?.data) {
@@ -562,28 +616,30 @@ export const ChatPage: FC = () => {
           }
         }
 
-        if (!base64) throw new Error('Tidak ada gambar dalam respons model.');
+        if (!base64) throw new Error('Model tidak mengembalikan data gambar.');
 
         setMessages(prev => prev.map(m => m.id === botId ? {
           ...m,
-          text: `\u2705 Gambar berhasil dibuat!`,
+          text: attachedImage ? '✅ Gambar berhasil dimodifikasi!' : '✅ Gambar berhasil dibuat!',
           generatedImages: [base64],
           generatedMime: mimeType,
           isStreaming: false,
           isImageGeneration: false,
         } : m));
-        const added = estimateTokens(imagePrompt) + 200;
+
+        const added = estimateTokens(isImageReq) + 200;
         setLimitData(prev => {
           const updated = { ...prev, totalTokens: prev.totalTokens + added };
           saveLimit(userIp!, updated);
           return updated;
         });
+
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setApiError(msg);
         setMessages(prev => prev.map(m => m.id === botId ? {
           ...m,
-          text: `\u26a0\ufe0f Gagal membuat gambar.\n\n${msg}`,
+          text: `⚠️ Gagal ${attachedImage ? 'memodifikasi' : 'membuat'} gambar.\n\n${msg}`,
           isError: true,
           isStreaming: false,
           isImageGeneration: false,
@@ -745,8 +801,7 @@ export const ChatPage: FC = () => {
 
       {/* ── Messages ────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 flex flex-col min-h-full">
-          <div className="mt-auto space-y-4">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-5 pb-6 space-y-4">
 
 
           {/* Error banner */}
@@ -768,14 +823,14 @@ export const ChatPage: FC = () => {
               <motion.div key={msg.id}
                 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.22 }}
-                className={`flex flex-col min-w-0 overflow-hidden gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                className={`flex flex-col min-w-0 gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
               >
                 {/* Avatar — selalu di atas */}
                 <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border ${msg.role === 'bot'
-                    ? msg.isError
-                      ? 'bg-red-900/30 border-red-500/50 text-red-400'
-                      : 'bg-red-600/15 border-red-500/40 text-red-400'
-                    : 'bg-slate-800 border-slate-700 text-slate-300'
+                  ? msg.isError
+                    ? 'bg-red-900/30 border-red-500/50 text-red-400'
+                    : 'bg-red-600/15 border-red-500/40 text-red-400'
+                  : 'bg-slate-800 border-slate-700 text-slate-300'
                   }`}>
                   {msg.role === 'bot' ? <Cpu className="w-4 h-4" /> : <User className="w-4 h-4" />}
                 </div>
@@ -792,10 +847,10 @@ export const ChatPage: FC = () => {
                   {/* Text Bubble */}
                   {(msg.text || (msg.isStreaming && msg.text !== '')) && (
                     <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed min-w-0 w-full overflow-hidden ${msg.role === 'bot'
-                        ? msg.isError
-                          ? 'bg-red-950/40 border border-red-500/30 text-red-300 rounded-tl-sm'
-                          : 'bg-[#0F0F16] border border-slate-800 text-slate-300 rounded-tl-sm'
-                        : 'bg-gradient-to-br from-red-600 to-red-500 text-white rounded-tr-sm shadow-lg shadow-red-900/30'
+                      ? msg.isError
+                        ? 'bg-red-950/40 border border-red-500/30 text-red-300 rounded-tl-sm'
+                        : 'bg-[#0F0F16] border border-slate-800 text-slate-300 rounded-tl-sm'
+                      : 'bg-gradient-to-br from-red-600 to-red-500 text-white rounded-tr-sm shadow-lg shadow-red-900/30'
                       }`}>
                       {msg.role === 'bot' ? (
                         <>
@@ -841,11 +896,10 @@ export const ChatPage: FC = () => {
                 className="flex flex-col gap-1.5 items-start"
               >
                 {/* Avatar */}
-                <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border ${
-                  isGeneratingImage
-                    ? 'bg-violet-600/15 border-violet-500/40 text-violet-400'
-                    : 'bg-red-600/15 border-red-500/40 text-red-400'
-                }`}>
+                <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border ${isGeneratingImage
+                  ? 'bg-violet-600/15 border-violet-500/40 text-violet-400'
+                  : 'bg-red-600/15 border-red-500/40 text-red-400'
+                  }`}>
                   {isGeneratingImage ? <Sparkles className="w-4 h-4" /> : <Cpu className="w-4 h-4" />}
                 </div>
 
@@ -902,7 +956,6 @@ export const ChatPage: FC = () => {
 
           <div ref={bottomRef} />
 
-          </div>{/* end mt-auto */}
         </div>
       </main>
 
@@ -969,8 +1022,8 @@ export const ChatPage: FC = () => {
               <button onClick={() => fileRef.current?.click()} disabled={!canSend}
                 title="Lampirkan gambar / file"
                 className={`relative w-11 h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${attachments.length > 0
-                    ? 'bg-red-500/15 border-red-500/50 text-red-400'
-                    : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-red-400'
+                  ? 'bg-red-500/15 border-red-500/50 text-red-400'
+                  : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-red-400'
                   }`}
               >
                 <Paperclip className="w-4 h-4" />
@@ -1020,14 +1073,14 @@ export const ChatPage: FC = () => {
               <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
                 <motion.div
                   className={`h-full rounded-full ${tokenPct >= 100 ? 'bg-red-500' :
-                      tokenPct >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
+                    tokenPct >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
                     }`}
                   animate={{ width: `${tokenPct}%` }}
                   transition={{ duration: 0.4 }}
                 />
               </div>
               <span className={`text-[10px] font-mono flex-shrink-0 ${tokenPct >= 100 ? 'text-red-400' :
-                  tokenPct >= 75 ? 'text-amber-400' : 'text-slate-500'
+                tokenPct >= 75 ? 'text-amber-400' : 'text-slate-500'
                 }`}>
                 {limitData.totalTokens}/{MAX_TOKENS} tk
               </span>

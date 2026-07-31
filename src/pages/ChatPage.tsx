@@ -154,37 +154,51 @@ function parseInline(text: string): ReactNode[] {
   return result;
 }
 
-// Code block with copy button
+// Code block with copy button — responsive + scrollable when > 10 lines
+const LINE_HEIGHT_PX = 22; // approximate line height in px (matches leading-relaxed @ ~13-14px font)
+const MAX_VISIBLE_LINES = 10;
+
 const CodeBlock: FC<{ lang: string; code: string }> = ({ lang, code }) => {
   const [copied, setCopied] = useState(false);
+  const trimmed = code.trim();
+  const lineCount = trimmed.split('\n').length;
+  const needsScroll = lineCount > MAX_VISIBLE_LINES;
+
   const copy = () => {
-    navigator.clipboard.writeText(code.trim());
+    navigator.clipboard.writeText(trimmed);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
   return (
-    <div className="my-3 rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] text-sm">
+    <div className="my-3 rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] w-full">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-800/70 border-b border-slate-700/80">
-        <span className="font-mono text-[11px] text-slate-400 tracking-wide">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-slate-800/70 border-b border-slate-700/80">
+        <span className="font-mono text-[10px] sm:text-[11px] text-slate-400 tracking-wide uppercase">
           {lang || 'code'}
         </span>
         <button
           onClick={copy}
-          className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition-colors group"
+          className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-400 hover:text-white transition-colors group"
         >
           {copied
-            ? <Check className="w-3.5 h-3.5 text-emerald-400" />
-            : <Copy className="w-3.5 h-3.5 group-hover:text-slate-200" />}
+            ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
+            : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 group-hover:text-slate-200" />}
           <span className={copied ? 'text-emerald-400' : ''}>{copied ? 'Copied!' : 'Copy'}</span>
         </button>
       </div>
-      {/* Code body */}
-      <pre className="p-4 overflow-x-auto">
-        <code className="font-mono text-[13px] text-slate-200 leading-relaxed whitespace-pre">
-          {code.trim()}
-        </code>
-      </pre>
+
+      {/* Code body — vertical scroll kicks in when > 10 lines */}
+      <div
+        className="overflow-x-auto overflow-y-auto"
+        style={needsScroll ? { maxHeight: `${MAX_VISIBLE_LINES * LINE_HEIGHT_PX + 32}px` } : undefined}
+      >
+        <pre className="px-3 sm:px-4 py-3 sm:py-4 min-w-0">
+          <code className="font-mono text-[11px] sm:text-[13px] text-slate-200 leading-relaxed whitespace-pre block">
+            {trimmed}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 };

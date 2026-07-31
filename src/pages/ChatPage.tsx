@@ -947,7 +947,7 @@ export const ChatPage: FC = () => {
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
             <span className="hidden sm:inline text-slate-500">FORMAT: JSON</span>
-            <span className="text-emerald-400">● ACTIVE SESSION</span>
+            <span className="text-emerald-400">● IP: {userIp || '...'}</span>
           </div>
         </div>
       </header>

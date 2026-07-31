@@ -203,29 +203,44 @@ function parseInline(text: string): ReactNode[] {
 }
 
 // ─── Generated Image Card ────────────────────────────────────────────────────
-const GeneratedImageCard: FC<{ base64: string; prompt: string; index: number; mime?: string }> = ({ base64, prompt, index, mime = 'image/png' }) => (
-  <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group">
-    <img
-      src={`data:${mime};base64,${base64}`}
-      alt={`Generated: ${prompt}`}
-      className="w-full max-w-xs sm:max-w-sm object-cover rounded-t-xl"
-    />
-    {/* Overlay on hover */}
-    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-200 flex items-end justify-end p-2 opacity-0 group-hover:opacity-100">
-      <button
-        onClick={() => downloadBase64Image(base64, `fetsubot-image-${index + 1}.${mime.split('/')[1] || 'png'}`, mime)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-sm border border-white/20 text-white text-xs font-medium hover:bg-white/20 transition-colors"
-      >
-        <Download className="w-3.5 h-3.5" />
-        Download
-      </button>
+const GeneratedImageCard: FC<{ base64: string; prompt: string; index: number; mime?: string }> = ({ base64, prompt, index, mime = 'image/png' }) => {
+  const ext = mime.split('/')[1] || 'png';
+  const filename = `fetsubot-image-${index + 1}.${ext}`;
+
+  return (
+    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group max-w-xs sm:max-w-sm my-2 shadow-xl">
+      <img
+        src={`data:${mime};base64,${base64}`}
+        alt={`Generated: ${prompt}`}
+        className="w-full object-cover rounded-t-xl"
+      />
+      {/* Overlay on hover (desktop) */}
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-200 hidden sm:flex items-end justify-end p-2 opacity-0 group-hover:opacity-100">
+        <button
+          onClick={() => downloadBase64Image(base64, filename, mime)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-500 transition-colors shadow-lg"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Download</span>
+        </button>
+      </div>
+      {/* Action Bar (Always visible on both Mobile & Desktop) */}
+      <div className="px-3 py-2.5 bg-slate-900/90 border-t border-slate-700/80 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-mono text-slate-400 truncate flex-1" title={prompt}>
+          🎨 &quot;{prompt}&quot;
+        </p>
+        <button
+          onClick={() => downloadBase64Image(base64, filename, mime)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white text-xs font-semibold shadow-md hover:from-red-500 hover:to-red-400 transition-all active:scale-95 flex-shrink-0"
+          title="Download Gambar"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Download</span>
+        </button>
+      </div>
     </div>
-    {/* Caption */}
-    <div className="px-3 py-2 bg-slate-900/80 border-t border-slate-700/80">
-      <p className="text-[10px] font-mono text-slate-500 truncate">🎨 &quot;{prompt}&quot;</p>
-    </div>
-  </div>
-);
+  );
+};
 
 function downloadTextFile(content: string, lang: string) {
   const extMap: Record<string, string> = {
@@ -262,29 +277,30 @@ const CodeBlock: FC<{ lang: string; code: string }> = ({ lang, code }) => {
   };
 
   return (
-    <div className="my-3 rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] max-w-full min-w-0">
+    <div className="my-3 rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] max-w-full min-w-0 shadow-lg">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-slate-800/70 border-b border-slate-700/80">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-slate-800/90 border-b border-slate-700/80">
         <span className="font-mono text-[10px] sm:text-[11px] text-slate-400 tracking-wide uppercase">
           {lang || 'code'}
         </span>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => downloadTextFile(trimmed, lang)}
-            className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-400 hover:text-white transition-colors group"
-            title="Download file"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600 hover:text-white text-[11px] font-semibold transition-all active:scale-95 shadow-sm"
+            title="Download File"
           >
-            <Download className="w-3 h-3 sm:w-3.5 sm:h-3.5 group-hover:text-slate-200" />
-            <span>Download</span>
+            <Download className="w-3.5 h-3.5 text-red-400 group-hover:text-white" />
+            <span>Download File</span>
           </button>
           <button
             onClick={copy}
-            className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-400 hover:text-white transition-colors group"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-700/50 border border-slate-600/50 text-slate-300 hover:bg-slate-700 hover:text-white text-[11px] font-medium transition-all active:scale-95"
+            title="Copy Code"
           >
             {copied
-              ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
-              : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 group-hover:text-slate-200" />}
-            <span className={copied ? 'text-emerald-400' : ''}>{copied ? 'Copied!' : 'Copy'}</span>
+              ? <Check className="w-3.5 h-3.5 text-emerald-400" />
+              : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+            <span className={copied ? 'text-emerald-400 font-semibold' : ''}>{copied ? 'Copied!' : 'Copy'}</span>
           </button>
         </div>
       </div>

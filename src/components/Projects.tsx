@@ -73,7 +73,7 @@ export const Projects: FC = () => {
               </div>
 
               <div className="space-y-4">
-                <span className="text-xs font-mono text-red-400/80 uppercase tracking-wider block">
+                <span className="text-xs font-mono text-red-400/80 uppercase tracking-wider block pr-32 sm:pr-36 pt-1 sm:pt-0">
                   {project.category}
                 </span>
 

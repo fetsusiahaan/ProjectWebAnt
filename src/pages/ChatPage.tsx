@@ -5,12 +5,13 @@ import type { ReactNode } from 'react';
 import {
   Send, ArrowLeft, Bot, User, Zap,
   Shield, Server, Code2, Database, Cloud, Cpu,
-  RefreshCw, Activity, ChevronRight, Paperclip,
+  RefreshCw, ChevronRight, Paperclip,
   X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
+import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../utils/session';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
@@ -137,6 +138,11 @@ function formatMs(ms: number): string {
 
 // ─── Image Generation & Modification Helpers ────────────────────────────────
 const IMAGE_KEYWORDS = [
+  'buatkan logo', 'buat logo', 'bikin logo', 'generate logo',
+  'desain logo', 'desainkan logo', 'rancang logo', 'desain kan logo',
+  'create logo', 'make logo', 'design logo', 'buatin logo',
+  'ilustrasi logo', 'gambar logo', 'gambarkan logo', 'edit logo',
+  'modifikasi logo', 'ubah logo', 'variasi logo', 'logo',
   'buatkan gambar', 'buat gambar', 'bikin gambar', 'generate gambar',
   'gambarkan', 'tolong gambarkan', 'buatin gambar', 'ilustrasikan',
   'create image', 'generate image', 'draw me', 'make image',
@@ -167,6 +173,7 @@ function isImageModifyIntent(text: string): boolean {
     'edit', 'ubah', 'modifikasi', 'ganti', 'perbaiki', 'filter',
     'tambah', 'tambahkan', 'hapus', 'style', 'jadikan', 'variasi', 'revisi', 'transform',
     'gambar', 'foto', 'image', 'background', 'warna', 'isi', 'isikan', 'lukis',
+    'logo', 'desain', 'rancang', 'lambang', 'simbol',
   ];
   return keywords.some(k => lower.includes(k));
 }
@@ -468,6 +475,9 @@ const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void }> = ({ fil
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export const ChatPage: FC = () => {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  const [copiedLink, setCopiedLink] = useState(false);
+
   const [messages, setMessages] = useState<Message[]>([{
     id: 'init', role: 'bot', timestamp: new Date(),
     text: '👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **Gemini AI**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀',
@@ -506,26 +516,79 @@ export const ChatPage: FC = () => {
     isFirstMount.current = false;
   }, [messages]);
 
-  // ── Fetch IP & load limit ──────────────────────────────────────────────────
+  // ── Fetch IP, load & restore Session JSON by sessionId / IP ─────────────────
   useEffect(() => {
     fetch('https://api.ipify.org?format=json')
       .then(r => r.json())
       .then(data => {
-        const ip = data.ip as string;
+        const ip = (data.ip as string) || '127.0.0.1';
         setUserIp(ip);
-        const saved = loadLimit(ip);
-        setLimitData(saved);
-        setTimeLeft(SESSION_DURATION - (Date.now() - saved.sessionStart));
+
+        const activeSid = sessionId || ipToUuid(ip);
+        if (!sessionId) {
+          window.history.replaceState(null, '', `/chat/${activeSid}`);
+        }
+
+        const savedSession = loadSessionJSON(activeSid);
+        if (savedSession) {
+          if (savedSession.limitData) {
+            setLimitData(savedSession.limitData);
+            setTimeLeft(SESSION_DURATION - (Date.now() - savedSession.limitData.sessionStart));
+          }
+          if (savedSession.messages && savedSession.messages.length > 0) {
+            setMessages(savedSession.messages.map(m => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })));
+          }
+          if (savedSession.history) {
+            setHistory(savedSession.history);
+          }
+        } else {
+          const saved = loadLimit(ip);
+          setLimitData(saved);
+          setTimeLeft(SESSION_DURATION - (Date.now() - saved.sessionStart));
+        }
       })
       .catch(() => {
-        // Fallback: use a fixed key if IP fetch fails
-        const fallback = 'unknown';
-        setUserIp(fallback);
-        const saved = loadLimit(fallback);
-        setLimitData(saved);
-        setTimeLeft(SESSION_DURATION - (Date.now() - saved.sessionStart));
+        const fallbackIp = '127.0.0.1';
+        setUserIp(fallbackIp);
+        const activeSid = sessionId || ipToUuid(fallbackIp);
+        const savedSession = loadSessionJSON(activeSid);
+        if (savedSession) {
+          if (savedSession.limitData) setLimitData(savedSession.limitData);
+          if (savedSession.messages && savedSession.messages.length > 0) {
+            setMessages(savedSession.messages.map(m => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })));
+          }
+          if (savedSession.history) setHistory(savedSession.history);
+        } else {
+          const saved = loadLimit(fallbackIp);
+          setLimitData(saved);
+        }
       });
-  }, []);
+  }, [sessionId]);
+
+  // ── Auto-save session state to JSON ─────────────────────────────────────────
+  useEffect(() => {
+    const activeSid = sessionId || (userIp ? ipToUuid(userIp) : null);
+    if (!activeSid || !userIp) return;
+
+    saveSessionJSON({
+      sessionId: activeSid,
+      ip: userIp,
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
+      messages: messages.map(m => ({
+        ...m,
+        timestamp: m.timestamp.toISOString(),
+      })),
+      history,
+      limitData,
+    });
+  }, [sessionId, userIp, messages, history, limitData]);
 
   // ── Countdown ticker ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -545,6 +608,34 @@ export const ChatPage: FC = () => {
     }, 1000);
     return () => clearInterval(tick);
   }, [userIp]);
+
+  // ── Download Session JSON & Copy Session URL ───────────────────────────────
+  const downloadSessionJSON = () => {
+    const activeSid = sessionId || (userIp ? ipToUuid(userIp) : 'session');
+    const dataObj = loadSessionJSON(activeSid) || {
+      sessionId: activeSid,
+      ip: userIp || '127.0.0.1',
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
+      messages: messages.map(m => ({ ...m, timestamp: m.timestamp.toISOString() })),
+      history,
+      limitData,
+    };
+
+    const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat-session-${activeSid.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copySessionUrl = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
 
   // ── File handling ──────────────────────────────────────────────────────────
   const processFiles = useCallback(async (files: FileList | null) => {
@@ -606,7 +697,11 @@ export const ChatPage: FC = () => {
       }]);
 
       try {
-        const reqParts: Part[] = [{ text: isImageReq }];
+        let promptText = isImageReq;
+        if (/logo|lambang|simbol|brand/i.test(isImageReq) || /logo|lambang|simbol|brand/i.test(msgText)) {
+          promptText = `Professional logo design: ${isImageReq}. Clean vector graphic, high resolution, minimalist modern logo aesthetic, solid white background, iconic branding.`;
+        }
+        const reqParts: Part[] = [{ text: promptText }];
         for (const f of snapshot) {
           if (f.isImage) {
             reqParts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
@@ -798,19 +893,45 @@ export const ChatPage: FC = () => {
               </p>
               <p className="text-[11px] font-mono text-emerald-400 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                {isStreaming ? 'Sedang mengetik...' : `Online — ${userIp ?? '...'}`}
+                {isStreaming ? 'Sedang mengetik...' : 'Online'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={downloadSessionJSON}
+              title="Download Sesi Chat (JSON)"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/15 border border-red-500/30 text-red-400 hover:bg-red-600 hover:text-white text-xs font-mono transition-all"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">JSON</span>
+            </button>
+            <button
+              onClick={copySessionUrl}
+              title="Salin Link Sesi"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs font-mono transition-all"
+            >
+              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{copiedLink ? 'Tersalin' : 'Link'}</span>
+            </button>
             <button onClick={clearChat} title="Reset Chat" className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-500/40 transition-all">
               <RefreshCw className="w-4 h-4" />
             </button>
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 border border-red-500/30 text-xs font-mono text-red-400">
-              <Activity className="w-3 h-3 animate-pulse" />
-              <span>STREAM</span>
-            </div>
+          </div>
+        </div>
+
+        {/* Session Info Ribbon */}
+        <div className="bg-[#0D0D14] border-t border-b border-slate-800/80 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div className="flex items-center gap-2 truncate">
+            <span className="text-red-400 font-bold">SESSION:</span>
+            <span className="text-slate-300 truncate max-w-[140px] sm:max-w-none">
+              {sessionId || (userIp ? ipToUuid(userIp) : 'loading...')}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <span className="hidden sm:inline text-slate-500">FORMAT: JSON</span>
+            <span className="text-emerald-400">● ACTIVE SESSION</span>
           </div>
         </div>
       </header>

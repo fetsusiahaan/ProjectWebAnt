@@ -8,7 +8,7 @@ import {
   RefreshCw, ChevronRight, Paperclip,
   X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
-  ZoomIn, ZoomOut, Mic, MicOff, MapPin, Compass, Navigation, ExternalLink,
+  ZoomIn, ZoomOut, Mic, MicOff, MapPin, Compass, Navigation, ExternalLink, Wrench,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -1125,9 +1125,149 @@ const ImageZoomModal: FC<{ image: ZoomImageData | null; onClose: () => void }> =
   );
 };
 
+const getOrCreateMaintenanceEndTime = (): number => {
+  const stored = localStorage.getItem('fetsu_maintenance_end_time');
+  if (stored) {
+    const parsed = parseInt(stored, 10);
+    if (!isNaN(parsed) && parsed > Date.now()) {
+      return parsed;
+    }
+  }
+  // Set 20 hours from current time automatically
+  const newEndTime = Date.now() + 20 * 60 * 60 * 1000;
+  localStorage.setItem('fetsu_maintenance_end_time', String(newEndTime));
+  return newEndTime;
+};
+
+// ─── Maintenance Screen Component (20-Hour Live Countdown) ──────────────────────
+interface MaintenanceProps {
+  endTime: number;
+  onFinished?: () => void;
+}
+
+const MaintenanceScreen: FC<MaintenanceProps> = ({ endTime, onFinished }) => {
+  const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number }>({
+    hours: 20,
+    minutes: 0,
+    seconds: 0,
+  });
+
+  useEffect(() => {
+    const updateCountdown = () => {
+      const diff = Math.max(0, endTime - Date.now());
+      if (diff <= 0) {
+        onFinished?.();
+        return;
+      }
+
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+      setTimeLeft({ hours, minutes, seconds });
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [endTime, onFinished]);
+
+  const totalDuration = 20 * 60 * 60 * 1000;
+  const elapsed = totalDuration - Math.max(0, endTime - Date.now());
+  const progressPercent = Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
+
+  return (
+    <div className="min-h-screen bg-[#07090E] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+      {/* Background glow animations */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-amber-500/10 rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute bottom-10 left-10 w-96 h-96 bg-red-600/10 rounded-full blur-[120px] pointer-events-none" />
+
+      <div className="relative z-10 max-w-xl w-full bg-slate-900/80 backdrop-blur-2xl border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl text-center flex flex-col items-center">
+        {/* Animated Badge */}
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wider mb-6 animate-pulse">
+          <Wrench className="w-4 h-4 text-amber-400" />
+          <span>Pemeliharaan Sistem Terjadwal</span>
+        </div>
+
+        {/* Icon & Title */}
+        <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-amber-500/20 to-red-600/20 border border-amber-500/30 flex items-center justify-center mb-6 shadow-lg shadow-amber-500/5">
+          <Bot className="w-10 h-10 text-amber-400 animate-bounce" />
+        </div>
+
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-3 tracking-tight">
+          FetsuBot Sedang Pemeliharaan
+        </h1>
+        <p className="text-slate-400 text-sm sm:text-base max-w-md leading-relaxed mb-8">
+          Sistem sedang menjalani perbaikan berkala dan pembaruan model AI untuk meningkatkan performa. Layanan akan otomatis aktif kembali begitu hitungan mundur selesai.
+        </p>
+
+        {/* Live Countdown Display */}
+        <div className="w-full bg-slate-950/70 border border-slate-800/80 rounded-2xl p-5 sm:p-6 mb-8 shadow-inner">
+          <p className="text-xs font-mono uppercase tracking-widest text-slate-400 mb-4">
+            Perkiraan Selesai Dalam (20 Jam)
+          </p>
+          <div className="grid grid-cols-3 gap-3 sm:gap-4 text-center">
+            {/* Hours */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col items-center shadow-md">
+              <span className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-500 font-mono">
+                {String(timeLeft.hours).padStart(2, '0')}
+              </span>
+              <span className="text-[10px] sm:text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Jam</span>
+            </div>
+
+            {/* Minutes */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col items-center shadow-md">
+              <span className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-500 font-mono">
+                {String(timeLeft.minutes).padStart(2, '0')}
+              </span>
+              <span className="text-[10px] sm:text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Menit</span>
+            </div>
+
+            {/* Seconds */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col items-center shadow-md">
+              <span className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-500 font-mono">
+                {String(timeLeft.seconds).padStart(2, '0')}
+              </span>
+              <span className="text-[10px] sm:text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Detik</span>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="mt-6">
+            <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+              <span>Status Perbaikan & Update Model</span>
+              <span>{progressPercent.toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-800">
+              <div
+                className="h-full bg-gradient-to-r from-amber-500 to-red-500 rounded-full transition-all duration-500"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+          <Link
+            to="/"
+            className="w-full sm:flex-1 py-3 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm font-semibold transition-all text-center flex items-center justify-center gap-2 shadow-lg"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Kembali ke Beranda</span>
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export const ChatPage: FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState<boolean>(true);
+  const [maintenanceEndTime] = useState<number>(() => getOrCreateMaintenanceEndTime());
+
   const [copiedLink, setCopiedLink] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -1751,7 +1891,17 @@ export const ChatPage: FC = () => {
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render Maintenance Screen if Maintenance Mode Active ──────────────────────
+  if (isMaintenanceMode) {
+    return (
+      <MaintenanceScreen
+        endTime={maintenanceEndTime}
+        onFinished={() => setIsMaintenanceMode(false)}
+      />
+    );
+  }
+
+  // ── Render Main Chat UI ───────────────────────────────────────────────────
   return (
     <div
       className="min-h-screen bg-[#08080C] flex flex-col text-slate-100 font-sans selection:bg-red-600 selection:text-white"

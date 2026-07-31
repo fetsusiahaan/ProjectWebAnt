@@ -67,25 +67,56 @@ interface Message {
 }
 
 // ─── Location & Google Maps Helpers ─────────────────────────────────────────
+const LOCATION_STOP_WORDS = new Set([
+  'dan', 'peta', 'untuk', 'foto', 'gambar', 'lokasi', 'informasi', 'tentang',
+  'apakah', 'ada', 'ke', 'di', 'pada', 'dari', 'yang', 'ini', 'itu', 'mengenai',
+  'seputar', 'bisa', 'tolong', 'carikan', 'tampilkan', 'mana', 'dimana', 'posisi',
+  'alamat', 'rute', 'maps', 'google', 'saya', 'kamu', 'anda', 'dia', 'mereka', 'saja'
+]);
+
+function cleanExtractedLocation(raw: string): string | null {
+  if (!raw) return null;
+  let cleaned = raw.replace(/[?!.,;:]+$/g, '').trim();
+
+  const words = cleaned.split(/\s+/);
+  while (words.length > 0 && LOCATION_STOP_WORDS.has(words[0].toLowerCase())) {
+    words.shift();
+  }
+  while (words.length > 0 && LOCATION_STOP_WORDS.has(words[words.length - 1].toLowerCase())) {
+    words.pop();
+  }
+
+  cleaned = words.join(' ').trim();
+  if (cleaned.length < 3) return null;
+  return cleaned;
+}
+
+const GEOGRAPHIC_PREFIX_PATTERN = /(?:pulau|danau|gunung|pantai|candi|taman|air terjun|kota|kabupaten|kecamatan|desa|kelurahan|bukit|lembah|sungai|tanjung|selat|teluk|museum|monumen|alun-alun|stasiun|bandara|pelabuhan)\s+([a-zA-Z0-9\s.-]{3,40})/i;
+
 function detectLocationQuery(text: string): string | null {
   if (!text) return null;
   const cleanText = text.trim();
 
-  // Pattern 1: Keywords like "lokasi X", "google maps X", "peta X", "alamat X", "dimana X", "posisi X", "rute ke X"
-  const keywordPattern = /(?:lokasi|peta|maps|google maps|alamat|rute ke|posisi|dimana|di mana|tempat)\s+(?:di\s+)?([a-zA-Z0-9\s,.-]{3,60})/i;
-  const match = cleanText.match(keywordPattern);
-  if (match && match[1]) {
-    const res = match[1].replace(/(\?|\!|\.|\,)$/, '').trim();
-    if (res.length >= 3 && !['kamu', 'apa', 'siapa', 'ini', 'itu', 'saya', 'dia', 'anda'].includes(res.toLowerCase())) {
-      return res;
-    }
+  // 1. Check geographic place prefixes (e.g. "Pulau Samosir", "Danau Toba", "Gunung Bromo")
+  const geoMatch = cleanText.match(GEOGRAPHIC_PREFIX_PATTERN);
+  if (geoMatch && geoMatch[0]) {
+    const cleaned = cleanExtractedLocation(geoMatch[0]);
+    if (cleaned) return cleaned;
   }
 
-  // Pattern 2: Well-known places, cities or landmarks explicitly mentioned
-  const landmarkPattern = /(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk)/i;
+  // 2. Explicit landmark & city match with strict word boundaries \b to avoid matching sub-words like "Balige" -> "bali"
+  const landmarkPattern = /\b(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|depok|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk|samosir|toba|bromo|rinjani|komodo|labuan bajo|raja ampat)\b/i;
   const lmMatch = cleanText.match(landmarkPattern);
   if (lmMatch && lmMatch[1]) {
     return lmMatch[1].trim();
+  }
+
+  // 3. Keyword pattern search ("lokasi X", "peta X", "alamat X", etc.)
+  const keywordPattern = /(?:lokasi|peta|maps|google maps|alamat|rute ke|posisi|dimana|di mana|tempat)\s+(?:di\s+|ke\s+|untuk\s+)?([a-zA-Z0-9\s,.-]{3,60})/i;
+  const match = cleanText.match(keywordPattern);
+  if (match && match[1]) {
+    const cleaned = cleanExtractedLocation(match[1]);
+    if (cleaned) return cleaned;
   }
 
   return null;
@@ -118,7 +149,7 @@ function resolveContextualSubject(userText: string, messageHistory: Message[]): 
       return loc;
     }
 
-    const lm = m.text.match(/(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk)/i);
+    const lm = m.text.match(/\b(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk|samosir|toba|bromo|rinjani|komodo|labuan bajo|raja ampat)\b/i);
     if (lm && lm[1]) {
       return lm[1];
     }
@@ -128,6 +159,10 @@ function resolveContextualSubject(userText: string, messageHistory: Message[]): 
 }
 
 const REAL_LANDMARK_PHOTOS: Record<string, string> = {
+  samosir: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
+  'pulau samosir': 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
+  toba: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
+  'danau toba': 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
   bekasi: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=800&q=80',
   jakarta: 'https://images.unsplash.com/photo-1555899434-94d1368aa7af?auto=format&fit=crop&w=800&q=80',
   monas: 'https://images.unsplash.com/photo-1555899434-94d1368aa7af?auto=format&fit=crop&w=800&q=80',
@@ -186,9 +221,23 @@ async function fetchInstagramPlacePhoto(query: string): Promise<string> {
   return getInstagramPhotoUrl(query);
 }
 
+function formatLocationQueryForMaps(query: string): string {
+  const clean = query.trim();
+  const lower = clean.toLowerCase();
+
+  // If query doesn't already contain indonesia, append indonesia for global precision
+  if (!lower.includes('indonesia') && !lower.includes('jakarta') && !lower.includes('bali') && !lower.includes('java')) {
+    return `${clean}, Indonesia`;
+  }
+  return clean;
+}
+
 function buildLocationData(query: string): LocationData {
-  const encoded = encodeURIComponent(query);
-  const mapEmbedUrl = `https://maps.google.com/maps?q=${encoded}&t=&z=15&ie=UTF8&iwloc=&output=embed`;
+  const fullSearchQuery = formatLocationQueryForMaps(query);
+  const encoded = encodeURIComponent(fullSearchQuery);
+
+  // iwloc=B forces Google Maps to place a RED PIN marker directly on the exact location
+  const mapEmbedUrl = `https://maps.google.com/maps?q=${encoded}&t=&z=14&ie=UTF8&iwloc=B&output=embed`;
   const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encoded}`;
   const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encoded}`;
   const photoUrl = getInstagramPhotoUrl(query);
@@ -196,7 +245,7 @@ function buildLocationData(query: string): LocationData {
   return {
     query,
     title: query.charAt(0).toUpperCase() + query.slice(1),
-    address: `Lokasi Referensi Google Maps untuk "${query}"`,
+    address: `Lokasi Referensi Google Maps (${fullSearchQuery})`,
     photoUrl,
     mapEmbedUrl,
     googleMapsUrl,

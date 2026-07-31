@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
-import type { FC } from 'react';
+import type { FC, MouseEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Terminal, ShieldCheck, Menu, X, Cpu, ArrowUpRight } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 export const Navbar: FC = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -23,6 +26,39 @@ export const Navbar: FC = () => {
     { name: 'Kontak', href: '#contact' },
   ];
 
+  const handleNavClick = (e: MouseEvent<HTMLAnchorElement>, href: string) => {
+    e.preventDefault();
+    setMobileMenuOpen(false);
+
+    const targetId = href.replace('#', '');
+
+    if (location.pathname !== '/' && location.pathname !== '') {
+      navigate('/' + href);
+      return;
+    }
+
+    if (!targetId) {
+      setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 160);
+      return;
+    }
+
+    setTimeout(() => {
+      const element = document.getElementById(targetId);
+      if (element) {
+        const headerOffset = 80;
+        const elementPosition = element.getBoundingClientRect().top + window.scrollY;
+        const offsetPosition = Math.max(0, elementPosition - headerOffset);
+
+        window.scrollTo({
+          top: offsetPosition,
+          behavior: 'smooth',
+        });
+      }
+    }, 160);
+  };
+
   return (
     <header
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isScrolled
@@ -32,7 +68,7 @@ export const Navbar: FC = () => {
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
         {/* Logo */}
-        <a href="#" className="flex items-center gap-3 group">
+        <a href="#" onClick={(e) => handleNavClick(e, '#')} className="flex items-center gap-3 group">
           <div className="w-10 h-10 rounded-lg bg-red-600/10 border border-red-500/40 flex items-center justify-center text-red-500 group-hover:bg-red-600 group-hover:text-white transition-all duration-300 group-hover:glow-red">
             <Terminal className="w-5 h-5" />
           </div>
@@ -52,6 +88,7 @@ export const Navbar: FC = () => {
             <a
               key={link.name}
               href={link.href}
+              onClick={(e) => handleNavClick(e, link.href)}
               className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200"
             >
               {link.name}
@@ -69,6 +106,7 @@ export const Navbar: FC = () => {
 
           <a
             href="#contact"
+            onClick={(e) => handleNavClick(e, '#contact')}
             className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-xs tracking-wider uppercase transition-all duration-300 glow-red-sm hover:glow-red flex items-center gap-1.5"
           >
             <span>Konsultasi Proyek</span>
@@ -93,7 +131,7 @@ export const Navbar: FC = () => {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
+            transition={{ duration: 0.15 }}
             className="md:hidden border-b border-red-500/30 bg-[#08080C]/95 backdrop-blur-xl px-4 pt-3 pb-6 space-y-3 shadow-2xl"
           >
             <div className="flex items-center justify-between py-2 border-b border-slate-800 text-xs font-mono text-emerald-400">
@@ -109,7 +147,7 @@ export const Navbar: FC = () => {
                 <a
                   key={link.name}
                   href={link.href}
-                  onClick={() => setMobileMenuOpen(false)}
+                  onClick={(e) => handleNavClick(e, link.href)}
                   className="px-4 py-3 rounded-lg text-base font-medium text-slate-200 hover:text-red-400 hover:bg-red-500/10 transition-colors flex items-center justify-between"
                 >
                   <span>{link.name}</span>
@@ -121,7 +159,7 @@ export const Navbar: FC = () => {
             <div className="pt-3">
               <a
                 href="#contact"
-                onClick={() => setMobileMenuOpen(false)}
+                onClick={(e) => handleNavClick(e, '#contact')}
                 className="w-full py-3 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white font-semibold text-sm uppercase tracking-wider text-center flex items-center justify-center gap-2 glow-red-sm"
               >
                 <Cpu className="w-4 h-4" />

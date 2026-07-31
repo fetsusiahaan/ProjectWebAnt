@@ -35,7 +35,7 @@ export const About: FC = () => {
   ];
 
   return (
-    <section id="about" className="py-20 md:py-28 bg-[#08080C] relative">
+    <section id="about" className="py-20 md:py-28 bg-[#08080C] relative scroll-mt-24">
       {/* Decorative Cyber Border Grid */}
       <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-red-500/30 to-transparent" />
       

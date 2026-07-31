@@ -23,7 +23,7 @@ export const Contact: FC = () => {
   };
 
   return (
-    <section id="contact" className="py-20 md:py-28 bg-[#08080C] relative">
+    <section id="contact" className="py-20 md:py-28 bg-[#08080C] relative scroll-mt-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
         {/* Section Header */}

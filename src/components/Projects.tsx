@@ -39,7 +39,7 @@ export const Projects: FC = () => {
   ];
 
   return (
-    <section id="projects" className="py-20 md:py-28 bg-[#0B0B10] relative overflow-hidden">
+    <section id="projects" className="py-20 md:py-28 bg-[#0B0B10] relative overflow-hidden scroll-mt-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Section Header */}

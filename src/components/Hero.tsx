@@ -23,7 +23,7 @@ export const Hero: FC = () => {
   }, []);
 
   return (
-    <section className="relative min-h-screen pt-28 pb-16 md:pt-36 md:pb-24 flex items-center justify-center overflow-hidden bg-grid-pattern">
+    <section id="hero" className="relative min-h-screen pt-28 pb-16 md:pt-36 md:pb-24 flex items-center justify-center overflow-hidden bg-grid-pattern scroll-mt-24">
       {/* Radial Glow Background Effect */}
       <div className="absolute inset-0 bg-radial-glow pointer-events-none" />
       <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-red-600/15 blur-[130px] rounded-full pointer-events-none" />

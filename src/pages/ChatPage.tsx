@@ -7,7 +7,7 @@ import {
   Shield, Server, Code2, Database, Cloud, Cpu,
   RefreshCw, Activity, ChevronRight, Paperclip,
   X, ImageIcon, FileText, AlertCircle, StopCircle,
-  Copy, Check, Clock, Lock,
+  Copy, Check, Clock, Lock, Download, Sparkles,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -15,6 +15,7 @@ import { GoogleGenAI } from '@google/genai';
 // ─── Config ───────────────────────────────────────────────────────────────────
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const MODEL = 'gemini-3.6-flash';
+const IMAGE_MODEL = 'gemini-3.1-flash-image';
 
 const SYSTEM_INSTRUCTION = `Kamu adalah FetsuBot, asisten virtual dari Fetsu Siahaan — seorang Software Engineer, Backend Developer, dan Solution Architect asal Indonesia.
 
@@ -66,6 +67,9 @@ interface Message {
   attachments?: AttachedFile[];
   isError?: boolean;
   isStreaming?: boolean;
+  generatedImages?: string[];   // base64 dari Gemini Image Generation
+  generatedMime?: string;       // MIME type gambar (image/png, image/jpeg, dll)
+  isImageGeneration?: boolean;  // flag: sedang generate gambar
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -131,6 +135,35 @@ function formatMs(ms: number): string {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+// ─── Image Generation Helpers ────────────────────────────────────────────────
+const IMAGE_KEYWORDS = [
+  'buatkan gambar', 'buat gambar', 'bikin gambar', 'generate gambar',
+  'gambarkan', 'tolong gambarkan', 'buatin gambar', 'ilustrasikan',
+  'create image', 'generate image', 'draw me', 'make image',
+  'buatkan foto', 'buat foto', 'bikin foto', 'buat ilustrasi',
+];
+
+/** Returns the image prompt if detected, otherwise null */
+function extractImagePrompt(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const kw of IMAGE_KEYWORDS) {
+    const idx = lower.indexOf(kw);
+    if (idx !== -1) {
+      const after = text.slice(idx + kw.length).replace(/^[:\s]+/, '').trim();
+      return after || text; // fallback ke full text jika kosong setelah keyword
+    }
+  }
+  return null;
+}
+
+function downloadBase64Image(base64: string, filename: string, mime = 'image/jpeg') {
+  const link = document.createElement('a');
+  link.href = `data:${mime};base64,${base64}`;
+  link.download = filename;
+  link.click();
+}
+
+
 // ─── Markdown Renderer (Claude-style) ───────────────────────────────────────
 
 // Parse inline: **bold**, *italic*, `code`
@@ -154,6 +187,31 @@ function parseInline(text: string): ReactNode[] {
   return result;
 }
 
+// ─── Generated Image Card ────────────────────────────────────────────────────
+const GeneratedImageCard: FC<{ base64: string; prompt: string; index: number; mime?: string }> = ({ base64, prompt, index, mime = 'image/png' }) => (
+  <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group">
+    <img
+      src={`data:${mime};base64,${base64}`}
+      alt={`Generated: ${prompt}`}
+      className="w-full max-w-xs sm:max-w-sm object-cover rounded-t-xl"
+    />
+    {/* Overlay on hover */}
+    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-200 flex items-end justify-end p-2 opacity-0 group-hover:opacity-100">
+      <button
+        onClick={() => downloadBase64Image(base64, `fetsubot-image-${index + 1}.${mime.split('/')[1] || 'png'}`, mime)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-sm border border-white/20 text-white text-xs font-medium hover:bg-white/20 transition-colors"
+      >
+        <Download className="w-3.5 h-3.5" />
+        Download
+      </button>
+    </div>
+    {/* Caption */}
+    <div className="px-3 py-2 bg-slate-900/80 border-t border-slate-700/80">
+      <p className="text-[10px] font-mono text-slate-500 truncate">🎨 &quot;{prompt}&quot;</p>
+    </div>
+  </div>
+);
+
 // Code block with copy button — responsive + scrollable when > 10 lines
 const LINE_HEIGHT_PX = 22; // approximate line height in px (matches leading-relaxed @ ~13-14px font)
 const MAX_VISIBLE_LINES = 10;
@@ -171,7 +229,7 @@ const CodeBlock: FC<{ lang: string; code: string }> = ({ lang, code }) => {
   };
 
   return (
-    <div className="my-3 rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] w-full">
+    <div className="my-3 rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] max-w-full min-w-0">
       {/* Header bar */}
       <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-slate-800/70 border-b border-slate-700/80">
         <span className="font-mono text-[10px] sm:text-[11px] text-slate-400 tracking-wide uppercase">
@@ -358,6 +416,7 @@ export const ChatPage: FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -379,9 +438,13 @@ export const ChatPage: FC = () => {
   const aiRef = useRef<GoogleGenAI | null>(null);
   if (!aiRef.current) aiRef.current = new GoogleGenAI({ apiKey: API_KEY });
 
-  // Scroll to bottom
+  // Scroll to bottom — instant on first mount, smooth on new messages
+  const isFirstMount = useRef(true);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({
+      behavior: isFirstMount.current ? 'instant' : 'smooth',
+    });
+    isFirstMount.current = false;
   }, [messages]);
 
   // ── Fetch IP & load limit ──────────────────────────────────────────────────
@@ -454,8 +517,8 @@ export const ChatPage: FC = () => {
     const msgText = (text ?? input).trim();
     if (!msgText && attachments.length === 0) return;
     if (isStreaming) return;
-    if (isBlocked) return;          // rate limited
-    if (!userIp) return;            // IP not yet loaded
+    if (isBlocked) return;
+    if (!userIp) return;
 
     setApiError(null);
     const snapshot = [...attachments];
@@ -468,20 +531,82 @@ export const ChatPage: FC = () => {
     setAttachments([]);
     setIsStreaming(true);
 
-    // Build parts for this turn
+    // ── Image generation branch ──────────────────────────────────────────────
+    const imagePrompt = snapshot.length === 0 ? extractImagePrompt(msgText) : null;
+    if (imagePrompt) {
+      const botId = `b-${Date.now()}`;
+      setIsGeneratingImage(true);
+      setMessages(prev => [...prev, {
+        id: botId, role: 'bot', text: '', timestamp: new Date(),
+        isStreaming: true, isImageGeneration: true,
+      }]);
+
+      try {
+        const response = await aiRef.current!.models.generateContent({
+          model: IMAGE_MODEL,
+          contents: [{ role: 'user', parts: [{ text: imagePrompt }] }],
+          config: { responseModalities: ['IMAGE', 'TEXT'] },
+        });
+
+        // Cari part inlineData (gambar)
+        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        let base64 = '';
+        let mimeType = 'image/jpeg';
+        for (const part of parts) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const inlineData = (part as any).inlineData;
+          if (inlineData?.data) {
+            base64 = inlineData.data as string;
+            mimeType = (inlineData.mimeType as string) || 'image/jpeg';
+            break;
+          }
+        }
+
+        if (!base64) throw new Error('Tidak ada gambar dalam respons model.');
+
+        setMessages(prev => prev.map(m => m.id === botId ? {
+          ...m,
+          text: `\u2705 Gambar berhasil dibuat!`,
+          generatedImages: [base64],
+          generatedMime: mimeType,
+          isStreaming: false,
+          isImageGeneration: false,
+        } : m));
+        const added = estimateTokens(imagePrompt) + 200;
+        setLimitData(prev => {
+          const updated = { ...prev, totalTokens: prev.totalTokens + added };
+          saveLimit(userIp!, updated);
+          return updated;
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setApiError(msg);
+        setMessages(prev => prev.map(m => m.id === botId ? {
+          ...m,
+          text: `\u26a0\ufe0f Gagal membuat gambar.\n\n${msg}`,
+          isError: true,
+          isStreaming: false,
+          isImageGeneration: false,
+        } : m));
+      } finally {
+        setIsGeneratingImage(false);
+        setIsStreaming(false);
+      }
+      return;
+    }
+
+    // ── Normal text streaming branch ─────────────────────────────────────────
     const userParts: Part[] = [];
     if (msgText) userParts.push({ text: msgText });
     for (const f of snapshot) {
       userParts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
     }
 
-    // Full contents = history + current user turn
     const contents = [
       ...history,
       { role: 'user' as const, parts: userParts },
     ];
 
-    // Placeholder bot message for streaming
     const botId = `b-${Date.now()}`;
     setMessages(prev => [...prev, { id: botId, role: 'bot', text: '', timestamp: new Date(), isStreaming: true }]);
 
@@ -500,19 +625,16 @@ export const ChatPage: FC = () => {
         if (abort.signal.aborted) break;
         const piece = chunk.text ?? '';
         fullText += piece;
-        // Real-time update
         setMessages(prev => prev.map(m => m.id === botId ? { ...m, text: fullText } : m));
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
 
-      // Save to history
       setHistory(prev => [
         ...prev,
         { role: 'user', parts: userParts },
         { role: 'model', parts: [{ text: fullText }] },
       ]);
 
-      // Track tokens
       if (!abort.signal.aborted) {
         const added = estimateTokens(fullText);
         setLimitData(prev => {
@@ -623,7 +745,8 @@ export const ChatPage: FC = () => {
 
       {/* ── Messages ────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 flex flex-col min-h-full">
+          <div className="mt-auto space-y-4">
 
 
           {/* Error banner */}
@@ -645,9 +768,9 @@ export const ChatPage: FC = () => {
               <motion.div key={msg.id}
                 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.22 }}
-                className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                className={`flex flex-col min-w-0 overflow-hidden gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
               >
-                {/* Avatar */}
+                {/* Avatar — selalu di atas */}
                 <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border ${msg.role === 'bot'
                     ? msg.isError
                       ? 'bg-red-900/30 border-red-500/50 text-red-400'
@@ -657,8 +780,8 @@ export const ChatPage: FC = () => {
                   {msg.role === 'bot' ? <Cpu className="w-4 h-4" /> : <User className="w-4 h-4" />}
                 </div>
 
-                {/* Content */}
-                <div className={`max-w-[78%] flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                {/* Content — di bawah avatar */}
+                <div className={`max-w-[85%] sm:max-w-[78%] min-w-0 flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                   {/* Attachment previews */}
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className={`flex flex-wrap gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
@@ -666,9 +789,9 @@ export const ChatPage: FC = () => {
                     </div>
                   )}
 
-                  {/* Bubble — only render when there IS text (streaming empty text → handled by TypingBubble below) */}
+                  {/* Text Bubble */}
                   {(msg.text || (msg.isStreaming && msg.text !== '')) && (
-                    <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'bot'
+                    <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed min-w-0 w-full overflow-hidden ${msg.role === 'bot'
                         ? msg.isError
                           ? 'bg-red-950/40 border border-red-500/30 text-red-300 rounded-tl-sm'
                           : 'bg-[#0F0F16] border border-slate-800 text-slate-300 rounded-tl-sm'
@@ -683,6 +806,21 @@ export const ChatPage: FC = () => {
                     </div>
                   )}
 
+                  {/* Generated Images */}
+                  {msg.generatedImages && msg.generatedImages.length > 0 && (
+                    <div className="flex flex-col gap-2 w-full max-w-xs sm:max-w-sm">
+                      {msg.generatedImages.map((b64, idx) => (
+                        <GeneratedImageCard
+                          key={idx}
+                          base64={b64}
+                          prompt={msg.text.replace('✅ Gambar berhasil dibuat!', '').trim() || 'generated'}
+                          index={idx}
+                          mime={msg.generatedMime ?? 'image/png'}
+                        />
+                      ))}
+                    </div>
+                  )}
+
                   <span className="text-[10px] font-mono text-slate-600 px-1">
                     {msg.timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
                   </span>
@@ -691,7 +829,7 @@ export const ChatPage: FC = () => {
             ))}
           </AnimatePresence>
 
-          {/* ── Typing Bubble (muncul di chat saat menunggu token pertama) ──────── */}
+          {/* ── Typing / Loading Bubbles ─────────────────────────────────────── */}
           <AnimatePresence>
             {isStreaming && messages[messages.length - 1]?.text === '' && (
               <motion.div
@@ -700,41 +838,63 @@ export const ChatPage: FC = () => {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.95 }}
                 transition={{ duration: 0.25, ease: 'easeOut' }}
-                className="flex gap-3 items-end"
+                className="flex flex-col gap-1.5 items-start"
               >
                 {/* Avatar */}
-                <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-red-600/15 border border-red-500/40 flex items-center justify-center text-red-400">
-                  <Cpu className="w-4 h-4" />
+                <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border ${
+                  isGeneratingImage
+                    ? 'bg-violet-600/15 border-violet-500/40 text-violet-400'
+                    : 'bg-red-600/15 border-red-500/40 text-red-400'
+                }`}>
+                  {isGeneratingImage ? <Sparkles className="w-4 h-4" /> : <Cpu className="w-4 h-4" />}
                 </div>
 
                 {/* Bubble */}
                 <div className="flex flex-col gap-1">
-                  {/* Label */}
                   <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1.5 px-1">
                     <motion.span
-                      className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"
+                      className={`w-1.5 h-1.5 rounded-full inline-block ${isGeneratingImage ? 'bg-violet-500' : 'bg-emerald-500'}`}
                       animate={{ opacity: [1, 0.3, 1] }}
                       transition={{ repeat: Infinity, duration: 1 }}
                     />
-                    FetsuBot sedang mengetik...
+                    {isGeneratingImage ? 'FetsuBot sedang membuat gambar...' : 'FetsuBot sedang mengetik...'}
                   </span>
 
-                  {/* Dot bubble */}
-                  <div className="bg-[#0F0F16] border border-slate-800 rounded-2xl rounded-tl-sm px-5 py-4 flex items-center gap-2">
-                    {[0, 1, 2].map((i) => (
-                      <motion.span
-                        key={i}
-                        className="w-2.5 h-2.5 rounded-full bg-red-500"
-                        animate={{ y: [0, -8, 0], opacity: [0.5, 1, 0.5] }}
-                        transition={{
-                          repeat: Infinity,
-                          duration: 0.8,
-                          delay: i * 0.18,
-                          ease: 'easeInOut',
-                        }}
-                      />
-                    ))}
-                  </div>
+                  {isGeneratingImage ? (
+                    /* Image generation loading */
+                    <div className="bg-[#0F0F16] border border-violet-500/20 rounded-2xl rounded-tl-sm px-5 py-5 flex flex-col items-center gap-3 w-48">
+                      <motion.div
+                        className="w-10 h-10 rounded-xl bg-violet-600/15 border border-violet-500/30 flex items-center justify-center"
+                        animate={{ rotate: [0, 360] }}
+                        transition={{ repeat: Infinity, duration: 2, ease: 'linear' }}
+                      >
+                        <Sparkles className="w-5 h-5 text-violet-400" />
+                      </motion.div>
+                      <div className="flex gap-1">
+                        {[0, 1, 2, 3].map((i) => (
+                          <motion.span
+                            key={i}
+                            className="w-1.5 h-1.5 rounded-full bg-violet-500"
+                            animate={{ opacity: [0.2, 1, 0.2] }}
+                            transition={{ repeat: Infinity, duration: 1.2, delay: i * 0.2 }}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-[10px] font-mono text-violet-400/70 text-center">Generating image...</p>
+                    </div>
+                  ) : (
+                    /* Text streaming dots */
+                    <div className="bg-[#0F0F16] border border-slate-800 rounded-2xl rounded-tl-sm px-5 py-4 flex items-center gap-2">
+                      {[0, 1, 2].map((i) => (
+                        <motion.span
+                          key={i}
+                          className="w-2.5 h-2.5 rounded-full bg-red-500"
+                          animate={{ y: [0, -8, 0], opacity: [0.5, 1, 0.5] }}
+                          transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.18, ease: 'easeInOut' }}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -742,6 +902,7 @@ export const ChatPage: FC = () => {
 
           <div ref={bottomRef} />
 
+          </div>{/* end mt-auto */}
         </div>
       </main>
 

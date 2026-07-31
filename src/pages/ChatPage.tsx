@@ -478,11 +478,30 @@ export const ChatPage: FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [copiedLink, setCopiedLink] = useState(false);
 
-  const [messages, setMessages] = useState<Message[]>([{
-    id: 'init', role: 'bot', timestamp: new Date(),
-    text: '👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **Gemini AI**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀',
-  }]);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (sessionId) {
+      const saved = loadSessionJSON(sessionId);
+      if (saved && saved.messages && saved.messages.length > 0) {
+        return saved.messages.map(m => ({
+          ...m,
+          timestamp: new Date(m.timestamp),
+        }));
+      }
+    }
+    return [{
+      id: 'init', role: 'bot', timestamp: new Date(),
+      text: '👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **Gemini AI**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀',
+    }];
+  });
+
+  const [history, setHistory] = useState<HistoryEntry[]>(() => {
+    if (sessionId) {
+      const saved = loadSessionJSON(sessionId);
+      if (saved && saved.history) return saved.history;
+    }
+    return [];
+  });
+
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -535,15 +554,6 @@ export const ChatPage: FC = () => {
             setLimitData(savedSession.limitData);
             setTimeLeft(SESSION_DURATION - (Date.now() - savedSession.limitData.sessionStart));
           }
-          if (savedSession.messages && savedSession.messages.length > 0) {
-            setMessages(savedSession.messages.map(m => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            })));
-          }
-          if (savedSession.history) {
-            setHistory(savedSession.history);
-          }
         } else {
           const saved = loadLimit(ip);
           setLimitData(saved);
@@ -555,15 +565,8 @@ export const ChatPage: FC = () => {
         setUserIp(fallbackIp);
         const activeSid = sessionId || ipToUuid(fallbackIp);
         const savedSession = loadSessionJSON(activeSid);
-        if (savedSession) {
-          if (savedSession.limitData) setLimitData(savedSession.limitData);
-          if (savedSession.messages && savedSession.messages.length > 0) {
-            setMessages(savedSession.messages.map(m => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            })));
-          }
-          if (savedSession.history) setHistory(savedSession.history);
+        if (savedSession && savedSession.limitData) {
+          setLimitData(savedSession.limitData);
         } else {
           const saved = loadLimit(fallbackIp);
           setLimitData(saved);
@@ -838,10 +841,23 @@ export const ChatPage: FC = () => {
   const clearChat = () => {
     abortRef.current?.abort();
     setHistory([]);
-    setMessages([{ id: `init-${Date.now()}`, role: 'bot', text: '🔄 Sesi baru dimulai. Ada yang bisa saya bantu?', timestamp: new Date() }]);
+    const freshMessages: Message[] = [{ id: `init-${Date.now()}`, role: 'bot', text: '🔄 Sesi baru dimulai. Ada yang bisa saya bantu?', timestamp: new Date() }];
+    setMessages(freshMessages);
     setAttachments([]);
     setApiError(null);
-    // NOTE: does NOT reset limit — user must wait for session to expire
+
+    const activeSid = sessionId || (userIp ? ipToUuid(userIp) : null);
+    if (activeSid) {
+      saveSessionJSON({
+        sessionId: activeSid,
+        ip: userIp || '127.0.0.1',
+        createdAt: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        messages: freshMessages.map(m => ({ ...m, timestamp: m.timestamp.toISOString() })),
+        history: [],
+        limitData,
+      });
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────

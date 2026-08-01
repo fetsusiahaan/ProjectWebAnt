@@ -24,7 +24,7 @@ export const FloatingChatButton: FC = () => {
   }, [showTooltip]);
 
   return (
-    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex flex-col items-end gap-3">
+    <div className="fixed bottom-[calc(24px+env(safe-area-inset-bottom))] right-4 sm:bottom-6 sm:right-6 z-50 flex flex-col items-end gap-3">
       {/* Tooltip Bubble */}
       <AnimatePresence>
         {showTooltip && !dismissed && (
@@ -60,13 +60,13 @@ export const FloatingChatButton: FC = () => {
       </AnimatePresence>
 
       {/* Floating Button */}
-      <Link to="/chat">
+      <Link to="/chat" className="relative block">
         <motion.button
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
           onHoverStart={() => setShowTooltip(true)}
           onHoverEnd={() => !dismissed && setShowTooltip(false)}
-          className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-gradient-to-br from-red-600 to-red-500 text-white shadow-2xl shadow-red-900/50 flex items-center justify-center group overflow-hidden"
+          className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-gradient-to-br from-red-600 to-red-500 text-white shadow-2xl shadow-red-900/50 flex items-center justify-center group overflow-hidden border border-black"
           aria-label="Open AI Chatbot"
         >
           {/* Glow ring */}
@@ -76,12 +76,12 @@ export const FloatingChatButton: FC = () => {
 
           {/* Icon toggle */}
           <Bot className="w-5 h-5 sm:w-6 sm:h-6 relative z-10" />
-
-          {/* Badge */}
-          <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-[#08080C] flex items-center justify-center">
-            <MessageCircle className="w-2 h-2 text-white" />
-          </span>
         </motion.button>
+
+        {/* Badge — placed outside to avoid overflow-hidden clipping */}
+        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-[#08080C] flex items-center justify-center z-20">
+          <MessageCircle className="w-2 h-2 text-white" />
+        </span>
       </Link>
     </div>
   );

@@ -8,7 +8,7 @@ import {
   RefreshCw, ChevronRight, Paperclip,
   X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
-  ZoomIn, ZoomOut, Mic, MicOff, MapPin, Compass, Navigation, ExternalLink, Wrench,
+  ZoomIn, ZoomOut, Mic, MicOff,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -16,11 +16,12 @@ import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../utils/session';
 import { CHAT_CONFIG, SYSTEM_INSTRUCTION } from '../config/chatConfig';
 
 const API_KEY = CHAT_CONFIG.apiKey;
-const MODEL = CHAT_CONFIG.model;
+const MODELS = CHAT_CONFIG.models || [CHAT_CONFIG.model || 'gemini-3.6-flash'];
 const IMAGE_MODELS = CHAT_CONFIG.imageModels || [CHAT_CONFIG.imageModel, 'nano-banana', 'imagen-3.0-generate-002'];
 const ACCEPTED_TYPES = CHAT_CONFIG.acceptedFileTypes;
 const MAX_TOKENS = CHAT_CONFIG.maxTokens;
 const SESSION_DURATION = CHAT_CONFIG.sessionDurationMs;
+const BLOCK_DURATION = CHAT_CONFIG.blockDurationMs;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Part {
@@ -42,16 +43,6 @@ interface AttachedFile {
   isImage: boolean;
 }
 
-export interface LocationData {
-  query: string;
-  title: string;
-  address?: string;
-  photoUrl?: string;
-  mapEmbedUrl: string;
-  googleMapsUrl: string;
-  directionsUrl: string;
-}
-
 interface Message {
   id: string;
   role: 'user' | 'bot';
@@ -63,314 +54,8 @@ interface Message {
   generatedImages?: string[];   // base64 dari Gemini Image Generation
   generatedMime?: string;       // MIME type gambar (image/png, image/jpeg, dll)
   isImageGeneration?: boolean;  // flag: sedang generate gambar
-  locationData?: LocationData;  // data lokasi Google Maps & foto tempat
+  tokenCount?: number;          // Jumlah token respons dari asisten
 }
-
-// ─── Location & Google Maps Helpers ─────────────────────────────────────────
-const LOCATION_STOP_WORDS = new Set([
-  'dan', 'peta', 'untuk', 'foto', 'gambar', 'lokasi', 'informasi', 'tentang',
-  'apakah', 'ada', 'ke', 'di', 'pada', 'dari', 'yang', 'ini', 'itu', 'mengenai',
-  'seputar', 'bisa', 'tolong', 'carikan', 'tampilkan', 'mana', 'dimana', 'posisi',
-  'alamat', 'rute', 'maps', 'google', 'saya', 'kamu', 'anda', 'dia', 'mereka', 'saja'
-]);
-
-function cleanExtractedLocation(raw: string): string | null {
-  if (!raw) return null;
-  let cleaned = raw.replace(/[?!.,;:]+$/g, '').trim();
-
-  const words = cleaned.split(/\s+/);
-  while (words.length > 0 && LOCATION_STOP_WORDS.has(words[0].toLowerCase())) {
-    words.shift();
-  }
-  while (words.length > 0 && LOCATION_STOP_WORDS.has(words[words.length - 1].toLowerCase())) {
-    words.pop();
-  }
-
-  cleaned = words.join(' ').trim();
-  if (cleaned.length < 3) return null;
-  return cleaned;
-}
-
-const GEOGRAPHIC_PREFIX_PATTERN = /(?:pulau|danau|gunung|pantai|candi|taman|air terjun|kota|kabupaten|kecamatan|desa|kelurahan|bukit|lembah|sungai|tanjung|selat|teluk|museum|monumen|alun-alun|stasiun|bandara|pelabuhan)\s+([a-zA-Z0-9\s.-]{3,40})/i;
-
-function detectLocationQuery(text: string): string | null {
-  if (!text) return null;
-  const cleanText = text.trim();
-
-  // 1. Check geographic place prefixes (e.g. "Pulau Samosir", "Danau Toba", "Gunung Bromo")
-  const geoMatch = cleanText.match(GEOGRAPHIC_PREFIX_PATTERN);
-  if (geoMatch && geoMatch[0]) {
-    const cleaned = cleanExtractedLocation(geoMatch[0]);
-    if (cleaned) return cleaned;
-  }
-
-  // 2. Explicit landmark & city match with strict word boundaries \b to avoid matching sub-words like "Balige" -> "bali"
-  const landmarkPattern = /\b(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|depok|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk|samosir|toba|bromo|rinjani|komodo|labuan bajo|raja ampat)\b/i;
-  const lmMatch = cleanText.match(landmarkPattern);
-  if (lmMatch && lmMatch[1]) {
-    return lmMatch[1].trim();
-  }
-
-  // 3. Keyword pattern search ("lokasi X", "peta X", "alamat X", etc.)
-  const keywordPattern = /(?:lokasi|peta|maps|google maps|alamat|rute ke|posisi|dimana|di mana|tempat)\s+(?:di\s+|ke\s+|untuk\s+)?([a-zA-Z0-9\s,.-]{3,60})/i;
-  const match = cleanText.match(keywordPattern);
-  if (match && match[1]) {
-    const cleaned = cleanExtractedLocation(match[1]);
-    if (cleaned) return cleaned;
-  }
-
-  return null;
-}
-
-/**
- * Resolves context when user sends follow-up requests like "carikan fotonya", "mana fotonya"
- */
-function resolveContextualSubject(userText: string, messageHistory: Message[]): string {
-  const clean = userText.trim();
-  const lower = clean.toLowerCase();
-
-  const isFollowUp = /^(carikan|mana|tampilkan|minta|lihat|kirim|apakah ada)\s+(foto|gambar|peta|lokasi|fotonya|gambarnya|petanya|lokasinya)\b/i.test(lower) ||
-    /^(foto|gambar|peta|lokasi|fotonya|gambarnya)$/i.test(lower);
-
-  if (!isFollowUp) {
-    return userText;
-  }
-
-  // Search recent history for active topic/location
-  for (let i = messageHistory.length - 1; i >= 0; i--) {
-    const m = messageHistory[i];
-
-    if (m.locationData?.title) {
-      return m.locationData.title;
-    }
-
-    const loc = detectLocationQuery(m.text);
-    if (loc) {
-      return loc;
-    }
-
-    const lm = m.text.match(/\b(monumen nasional|monas|candi borobudur|pantai kuta|grafana|fetsu|jakarta|bandung|surakarta|yogyakarta|jogja|bali|medan|semarang|surabaya|malang|bogor|bekasi|tangerang|tanah abang|dufan|taman mini|tmii|ancol|senayan|gbk|samosir|toba|bromo|rinjani|komodo|labuan bajo|raja ampat)\b/i);
-    if (lm && lm[1]) {
-      return lm[1];
-    }
-  }
-
-  return userText;
-}
-
-const REAL_LANDMARK_PHOTOS: Record<string, string> = {
-  samosir: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  'pulau samosir': 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  toba: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  'danau toba': 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  bekasi: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=800&q=80',
-  jakarta: 'https://images.unsplash.com/photo-1555899434-94d1368aa7af?auto=format&fit=crop&w=800&q=80',
-  monas: 'https://images.unsplash.com/photo-1555899434-94d1368aa7af?auto=format&fit=crop&w=800&q=80',
-  'monumen nasional': 'https://images.unsplash.com/photo-1555899434-94d1368aa7af?auto=format&fit=crop&w=800&q=80',
-  ancol: 'https://images.unsplash.com/photo-1588668214407-6ea9a6d8c272?auto=format&fit=crop&w=800&q=80',
-  dufan: 'https://images.unsplash.com/photo-1588668214407-6ea9a6d8c272?auto=format&fit=crop&w=800&q=80',
-  bandung: 'https://images.unsplash.com/photo-1584810359583-96fc3448beaa?auto=format&fit=crop&w=800&q=80',
-  surabaya: 'https://images.unsplash.com/photo-1601058268499-e52658b8bb88?auto=format&fit=crop&w=800&q=80',
-  bali: 'https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=800&q=80',
-  kuta: 'https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=800&q=80',
-  yogyakarta: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  jogja: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  borobudur: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  'candi borobudur': 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  bogor: 'https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80',
-  tangerang: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=800&q=80',
-  depok: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=800&q=80',
-  medan: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=800&q=80',
-  semarang: 'https://images.unsplash.com/photo-1601058268499-e52658b8bb88?auto=format&fit=crop&w=800&q=80',
-  malang: 'https://images.unsplash.com/photo-1584810359583-96fc3448beaa?auto=format&fit=crop&w=800&q=80',
-};
-
-function getInstagramPhotoUrl(query: string): string {
-  const clean = query.toLowerCase().trim();
-  for (const [key, url] of Object.entries(REAL_LANDMARK_PHOTOS)) {
-    if (clean.includes(key)) return url;
-  }
-  const seed = Math.abs(query.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0));
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(`real landmark photograph of ${query} city location place indonesia, realistic shot, 8k resolution`)}?width=800&height=500&nologo=true&seed=${seed}`;
-}
-
-/**
- * Scrapes & fetches Instagram location & hashtag photography for any place query
- */
-async function fetchInstagramPlacePhoto(query: string): Promise<string> {
-  const clean = query.trim().replace(/\s+/g, '');
-  const tag = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  // 1. Try fetching public Instagram hashtag media via public CORS proxy
-  try {
-    const igProxyUrl = `https://www.instagram.com/explore/tags/${tag}/?__a=1&__d=dis`;
-    const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(igProxyUrl)}`);
-    if (res.ok) {
-      const data = await res.json();
-      const mediaList = data?.graphql?.hashtag?.edge_hashtag_to_media?.edges;
-      if (mediaList && mediaList.length > 0) {
-        const photoSrc = mediaList[0]?.node?.display_url || mediaList[0]?.node?.thumbnail_src;
-        if (photoSrc) return photoSrc;
-      }
-    }
-  } catch (err) {
-    console.warn('Instagram direct scrape failed or CORS blocked, using Instagram media stream fallback:', err);
-  }
-
-  // 2. Instagram Aesthetic Real Place Stream Fallback
-  return getInstagramPhotoUrl(query);
-}
-
-function formatLocationQueryForMaps(query: string): string {
-  const clean = query.trim();
-  const lower = clean.toLowerCase();
-
-  // If query doesn't already contain indonesia, append indonesia for global precision
-  if (!lower.includes('indonesia') && !lower.includes('jakarta') && !lower.includes('bali') && !lower.includes('java')) {
-    return `${clean}, Indonesia`;
-  }
-  return clean;
-}
-
-function buildLocationData(query: string): LocationData {
-  const fullSearchQuery = formatLocationQueryForMaps(query);
-  const encoded = encodeURIComponent(fullSearchQuery);
-
-  // iwloc=B forces Google Maps to place a RED PIN marker directly on the exact location
-  const mapEmbedUrl = `https://maps.google.com/maps?q=${encoded}&t=&z=14&ie=UTF8&iwloc=B&output=embed`;
-  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encoded}`;
-  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encoded}`;
-  const photoUrl = getInstagramPhotoUrl(query);
-
-  return {
-    query,
-    title: query.charAt(0).toUpperCase() + query.slice(1),
-    address: `Lokasi Referensi Google Maps (${fullSearchQuery})`,
-    photoUrl,
-    mapEmbedUrl,
-    googleMapsUrl,
-    directionsUrl,
-  };
-}
-
-// ─── Google Maps Card Component ─────────────────────────────────────────────
-const GoogleMapsCard: FC<{
-  location: LocationData;
-  onZoomImage?: (photoUrl: string, title: string) => void;
-}> = ({ location, onZoomImage }) => {
-  const [showMap, setShowMap] = useState(true);
-  const initialPhoto = location.photoUrl || getInstagramPhotoUrl(location.query);
-  const [imgSrc, setImgSrc] = useState<string>(initialPhoto);
-
-  useEffect(() => {
-    let isMounted = true;
-    const defaultPhoto = location.photoUrl || getInstagramPhotoUrl(location.query);
-    setImgSrc(defaultPhoto);
-
-    fetchInstagramPlacePhoto(location.query)
-      .then(url => {
-        if (isMounted && url) {
-          setImgSrc(url);
-        }
-      })
-      .catch(() => {
-        if (isMounted) setImgSrc(defaultPhoto);
-      });
-
-    return () => { isMounted = false; };
-  }, [location.photoUrl, location.query]);
-
-  const handleImageError = () => {
-    setImgSrc(`https://images.unsplash.com/photo-1596402184320-417e7178b2cd?auto=format&fit=crop&w=800&q=80`);
-  };
-
-  return (
-    <div className="my-3 rounded-2xl overflow-hidden border border-slate-700/80 bg-[#09090F] shadow-xl max-w-full min-w-0">
-      {/* Header Bar */}
-      <div className="px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 truncate">
-          <div className="p-1.5 rounded-lg bg-red-600/15 border border-red-500/30 text-red-400 flex-shrink-0">
-            <MapPin className="w-4 h-4" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-bold text-white truncate">{location.title}</p>
-            <p className="text-[10px] font-mono text-slate-400 truncate">{location.address}</p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setShowMap(prev => !prev)}
-          className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 hover:text-white text-xs font-mono transition-all flex items-center gap-1 flex-shrink-0"
-        >
-          <Compass className="w-3.5 h-3.5 text-red-400" />
-          <span>{showMap ? 'Sembunyikan Peta' : 'Tampilkan Peta'}</span>
-        </button>
-      </div>
-
-      {/* 1. Foto Tempat dari Instagram (Selalu Tampil di Atas) */}
-      {imgSrc && (
-        <div
-          onClick={() => onZoomImage?.(imgSrc, location.title)}
-          className="relative group cursor-pointer overflow-hidden h-52 sm:h-60 bg-slate-950"
-          title="Klik untuk Zoom Foto Tempat Instagram"
-        >
-          <img
-            src={imgSrc}
-            alt={location.title}
-            onError={handleImageError}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          />
-          <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs">
-            <ZoomIn className="w-5 h-5 text-red-400" />
-            <span>Klik untuk Zoom Foto Instagram</span>
-          </div>
-          <div className="absolute top-2 left-2 px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md border border-white/10 text-[10px] font-mono text-white flex items-center gap-1.5 shadow-md">
-            <Sparkles className="w-3 h-3 text-pink-400" />
-            <span>📸 Foto Instagram Location</span>
-          </div>
-        </div>
-      )}
-
-      {/* 2. Peta Google Maps Interaktif (Di Bawah Foto) */}
-      {showMap && (
-        <div className="w-full h-48 sm:h-56 overflow-hidden relative border-t border-slate-800">
-          <iframe
-            title={`Google Maps ${location.title}`}
-            src={location.mapEmbedUrl}
-            className="w-full h-full border-0"
-            loading="lazy"
-            allowFullScreen
-          />
-        </div>
-      )}
-
-      {/* Footer Buttons */}
-      <div className="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
-        <a
-          href={location.googleMapsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white text-xs font-semibold shadow-md transition-all active:scale-95 text-center whitespace-nowrap"
-        >
-          <Compass className="w-3.5 h-3.5" />
-          <span>Buka di Google Maps</span>
-          <ExternalLink className="w-3 h-3 opacity-80" />
-        </a>
-
-        <a
-          href={location.directionsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-all active:scale-95 text-center whitespace-nowrap"
-        >
-          <Navigation className="w-3.5 h-3.5 text-red-400" />
-          <span>Petunjuk Arah</span>
-        </a>
-      </div>
-    </div>
-  );
-};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fileToBase64(file: File): Promise<string> {
@@ -442,27 +127,31 @@ function generateSvgFallbackBase64(promptText: string): { base64: string; mimeTy
 interface LimitData {
   sessionStart: number;
   totalTokens: number;
+  blockedAt?: number | null;
 }
 
 function storageKey(ip: string) {
   return `fetsubot_limit_${ip}`;
 }
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
 function loadLimit(ip: string): LimitData {
   try {
     const raw = localStorage.getItem(storageKey(ip));
-    if (!raw) return { sessionStart: Date.now(), totalTokens: 0 };
+    if (!raw) return { sessionStart: Date.now(), totalTokens: 0, blockedAt: null };
     const data: LimitData = JSON.parse(raw);
-    // expired → fresh session
-    if (Date.now() - data.sessionStart >= SESSION_DURATION) {
-      return { sessionStart: Date.now(), totalTokens: 0 };
+    
+    // Check block status first
+    if (data.blockedAt) {
+      if (Date.now() - data.blockedAt >= BLOCK_DURATION) {
+        // Block duration expired -> reset everything
+        return { sessionStart: Date.now(), totalTokens: 0, blockedAt: null };
+      }
+    } else if (Date.now() - data.sessionStart >= SESSION_DURATION) {
+      // Normal session reset (15 min)
+      return { sessionStart: Date.now(), totalTokens: 0, blockedAt: null };
     }
     return data;
-  } catch { return { sessionStart: Date.now(), totalTokens: 0 }; }
+  } catch { return { sessionStart: Date.now(), totalTokens: 0, blockedAt: null }; }
 }
 
 function saveLimit(ip: string, data: LimitData) {
@@ -474,6 +163,13 @@ function formatMs(ms: number): string {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function calculateTimeLeft(limit: LimitData): number {
+  if (limit.blockedAt) {
+    return BLOCK_DURATION - (Date.now() - limit.blockedAt);
+  }
+  return SESSION_DURATION - (Date.now() - limit.sessionStart);
 }
 
 // ─── Image Generation & Modification Helpers ────────────────────────────────
@@ -1125,174 +821,22 @@ const ImageZoomModal: FC<{ image: ZoomImageData | null; onClose: () => void }> =
   );
 };
 
-const getOrCreateMaintenanceEndTime = (): number => {
-  const stored = localStorage.getItem('fetsu_maintenance_end_time');
-  if (stored) {
-    const parsed = parseInt(stored, 10);
-    if (!isNaN(parsed) && parsed > Date.now()) {
-      return parsed;
-    }
-  }
-  // Set 20 hours from current time automatically
-  const newEndTime = Date.now() + 20 * 60 * 60 * 1000;
-  localStorage.setItem('fetsu_maintenance_end_time', String(newEndTime));
-  return newEndTime;
-};
 
-// ─── Maintenance Screen Component (20-Hour Live Countdown) ──────────────────────
-interface MaintenanceProps {
-  endTime: number;
-  onFinished?: () => void;
-}
-
-const MaintenanceScreen: FC<MaintenanceProps> = ({ endTime, onFinished }) => {
-  const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number }>({
-    hours: 20,
-    minutes: 0,
-    seconds: 0,
-  });
-
-  useEffect(() => {
-    const updateCountdown = () => {
-      const diff = Math.max(0, endTime - Date.now());
-      if (diff <= 0) {
-        onFinished?.();
-        return;
-      }
-
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      setTimeLeft({ hours, minutes, seconds });
-    };
-
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-    return () => clearInterval(interval);
-  }, [endTime, onFinished]);
-
-  const totalDuration = 20 * 60 * 60 * 1000;
-  const elapsed = totalDuration - Math.max(0, endTime - Date.now());
-  const progressPercent = Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
-
-  return (
-    <div className="min-h-screen bg-[#07090E] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
-      {/* Background glow animations */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-amber-500/10 rounded-full blur-[140px] pointer-events-none" />
-      <div className="absolute bottom-10 left-10 w-96 h-96 bg-red-600/10 rounded-full blur-[120px] pointer-events-none" />
-
-      <div className="relative z-10 max-w-xl w-full bg-slate-900/80 backdrop-blur-2xl border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl text-center flex flex-col items-center">
-        {/* Animated Badge */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wider mb-6 animate-pulse">
-          <Wrench className="w-4 h-4 text-amber-400" />
-          <span>Pemeliharaan Sistem Terjadwal</span>
-        </div>
-
-        {/* Icon & Title */}
-        <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-amber-500/20 to-red-600/20 border border-amber-500/30 flex items-center justify-center mb-6 shadow-lg shadow-amber-500/5">
-          <Bot className="w-10 h-10 text-amber-400 animate-bounce" />
-        </div>
-
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-3 tracking-tight">
-          FetsuBot Sedang Pemeliharaan
-        </h1>
-        <p className="text-slate-400 text-sm sm:text-base max-w-md leading-relaxed mb-8">
-          Sistem sedang menjalani perbaikan berkala dan pembaruan model AI untuk meningkatkan performa. Layanan akan otomatis aktif kembali begitu hitungan mundur selesai.
-        </p>
-
-        {/* Live Countdown Display */}
-        <div className="w-full bg-slate-950/70 border border-slate-800/80 rounded-2xl p-5 sm:p-6 mb-8 shadow-inner">
-          <p className="text-xs font-mono uppercase tracking-widest text-slate-400 mb-4">
-            Perkiraan Selesai Dalam (20 Jam)
-          </p>
-          <div className="grid grid-cols-3 gap-3 sm:gap-4 text-center">
-            {/* Hours */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col items-center shadow-md">
-              <span className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-500 font-mono">
-                {String(timeLeft.hours).padStart(2, '0')}
-              </span>
-              <span className="text-[10px] sm:text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Jam</span>
-            </div>
-
-            {/* Minutes */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col items-center shadow-md">
-              <span className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-500 font-mono">
-                {String(timeLeft.minutes).padStart(2, '0')}
-              </span>
-              <span className="text-[10px] sm:text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Menit</span>
-            </div>
-
-            {/* Seconds */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col items-center shadow-md">
-              <span className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-500 font-mono">
-                {String(timeLeft.seconds).padStart(2, '0')}
-              </span>
-              <span className="text-[10px] sm:text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Detik</span>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="mt-6">
-            <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1.5">
-              <span>Status Perbaikan & Update Model</span>
-              <span>{progressPercent.toFixed(1)}%</span>
-            </div>
-            <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-800">
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 to-red-500 rounded-full transition-all duration-500"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Navigation */}
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
-          <Link
-            to="/"
-            className="w-full sm:flex-1 py-3 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm font-semibold transition-all text-center flex items-center justify-center gap-2 shadow-lg"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Kembali ke Beranda</span>
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export const ChatPage: FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const [isMaintenanceMode, setIsMaintenanceMode] = useState<boolean>(true);
-  const [maintenanceEndTime] = useState<number>(() => getOrCreateMaintenanceEndTime());
 
   const [copiedLink, setCopiedLink] = useState(false);
 
-  const [messages, setMessages] = useState<Message[]>(() => {
-    if (sessionId) {
-      const saved = loadSessionJSON(sessionId);
-      if (saved && saved.messages && saved.messages.length > 0) {
-        return saved.messages.map(m => ({
-          ...m,
-          timestamp: new Date(m.timestamp),
-        }));
-      }
-    }
-    return [{
-      id: 'init', role: 'bot', timestamp: new Date(),
-      text: '👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **Gemini AI**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀',
-    }];
-  });
+  const defaultWelcomeMessage = (): Message[] => [{
+    id: 'init', role: 'bot', timestamp: new Date(),
+    text: '👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **Gemini AI**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀',
+  }];
 
-  const [history, setHistory] = useState<HistoryEntry[]>(() => {
-    if (sessionId) {
-      const saved = loadSessionJSON(sessionId);
-      if (saved && saved.history) return saved.history;
-    }
-    return [];
-  });
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [isLoadingSession, setIsLoadingSession] = useState(true);
 
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -1353,16 +897,30 @@ export const ChatPage: FC = () => {
             const base64Audio = (reader.result as string).split(',')[1];
             if (!base64Audio || !aiRef.current) return;
 
-            const res = await aiRef.current.models.generateContent({
-              model: MODEL,
-              contents: [{
-                role: 'user',
-                parts: [
-                  { inlineData: { mimeType, data: base64Audio } },
-                  { text: 'Transkripsikan rekaman suara ini ke dalam teks Bahasa Indonesia. Hanya kembalikan teks hasil transkrip saja tanpa komentar atau penjelasan tambahan.' }
-                ]
-              }]
-            });
+            let res = null;
+            let transcrError = null;
+            for (const modelName of MODELS) {
+              try {
+                res = await aiRef.current.models.generateContent({
+                  model: modelName,
+                  contents: [{
+                    role: 'user',
+                    parts: [
+                      { inlineData: { mimeType, data: base64Audio } },
+                      { text: 'Transkripsikan rekaman suara ini ke dalam teks Bahasa Indonesia. Hanya kembalikan teks hasil transkrip saja tanpa komentar atau penjelasan tambahan.' }
+                    ]
+                  }]
+                });
+                break;
+              } catch (e) {
+                console.warn(`Transcription failed with model ${modelName}:`, e);
+                transcrError = e;
+              }
+            }
+
+            if (!res) {
+              throw transcrError || new Error('All models failed to transcribe audio');
+            }
 
             const text = res.text?.trim() || '';
             if (text) {
@@ -1492,11 +1050,11 @@ export const ChatPage: FC = () => {
   };
 
   // Rate limit state
-  const [userIp, setUserIp] = useState<string>('127.0.0.1');
+  const [userIp, setUserIp] = useState<string>('');
   const [limitData, setLimitData] = useState<LimitData>({ sessionStart: Date.now(), totalTokens: 0 });
   const [timeLeft, setTimeLeft] = useState<number>(SESSION_DURATION);
 
-  const isBlocked = limitData.totalTokens >= MAX_TOKENS;
+  const isBlocked = limitData.totalTokens >= MAX_TOKENS || !!limitData.blockedAt;
   const tokenPct = Math.min(100, (limitData.totalTokens / MAX_TOKENS) * 100);
   const canSend = !isStreaming && !isBlocked;
 
@@ -1512,10 +1070,10 @@ export const ChatPage: FC = () => {
   const isFirstMount = useRef(true);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
-      behavior: isFirstMount.current ? 'instant' : 'smooth',
+      behavior: isFirstMount.current ? 'instant' : (isStreaming ? 'auto' : 'smooth'),
     });
     isFirstMount.current = false;
-  }, [messages]);
+  }, [messages, isStreaming]);
 
   // ── Fetch IP, load & restore Session JSON by sessionId / IP ─────────────────
   useEffect(() => {
@@ -1532,14 +1090,26 @@ export const ChatPage: FC = () => {
 
         const savedSession = loadSessionJSON(activeSid);
         if (savedSession) {
+          if (savedSession.messages && savedSession.messages.length > 0) {
+            setMessages(savedSession.messages.map(m => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })));
+          } else {
+            setMessages(defaultWelcomeMessage());
+          }
+          if (savedSession.history) {
+            setHistory(savedSession.history);
+          }
           if (savedSession.limitData) {
             setLimitData(savedSession.limitData);
-            setTimeLeft(SESSION_DURATION - (Date.now() - savedSession.limitData.sessionStart));
+            setTimeLeft(calculateTimeLeft(savedSession.limitData));
           }
         } else {
+          setMessages(defaultWelcomeMessage());
           const saved = loadLimit(ip);
           setLimitData(saved);
-          setTimeLeft(SESSION_DURATION - (Date.now() - saved.sessionStart));
+          setTimeLeft(calculateTimeLeft(saved));
         }
       })
       .catch(() => {
@@ -1547,17 +1117,37 @@ export const ChatPage: FC = () => {
         setUserIp(fallbackIp);
         const activeSid = sessionId || ipToUuid(fallbackIp);
         const savedSession = loadSessionJSON(activeSid);
-        if (savedSession && savedSession.limitData) {
-          setLimitData(savedSession.limitData);
+        if (savedSession) {
+          if (savedSession.messages && savedSession.messages.length > 0) {
+            setMessages(savedSession.messages.map(m => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })));
+          } else {
+            setMessages(defaultWelcomeMessage());
+          }
+          if (savedSession.history) {
+            setHistory(savedSession.history);
+          }
+          if (savedSession.limitData) {
+            setLimitData(savedSession.limitData);
+            setTimeLeft(calculateTimeLeft(savedSession.limitData));
+          }
         } else {
+          setMessages(defaultWelcomeMessage());
           const saved = loadLimit(fallbackIp);
           setLimitData(saved);
         }
+      })
+      .finally(() => {
+        setIsLoadingSession(false);
+        window.scrollTo(0, 0);
       });
   }, [sessionId]);
 
   // ── Auto-save session state to JSON ─────────────────────────────────────────
   useEffect(() => {
+    if (isLoadingSession) return;
     const activeSid = sessionId || (userIp ? ipToUuid(userIp) : null);
     if (!activeSid || !userIp) return;
 
@@ -1573,17 +1163,31 @@ export const ChatPage: FC = () => {
       history,
       limitData,
     });
-  }, [sessionId, userIp, messages, history, limitData]);
+  }, [sessionId, userIp, messages, history, limitData, isLoadingSession]);
 
   // ── Countdown ticker ──────────────────────────────────────────────────────
   useEffect(() => {
     const tick = setInterval(() => {
       setLimitData(prev => {
-        const remaining = SESSION_DURATION - (Date.now() - prev.sessionStart);
-        setTimeLeft(remaining);
-        // Auto-reset expired session
-        if (remaining <= 0 && userIp) {
-          const fresh = { sessionStart: Date.now(), totalTokens: 0 };
+        // If blocked, count down from BLOCK_DURATION (5 minutes)
+        if (prev.blockedAt) {
+          const remainingBlock = BLOCK_DURATION - (Date.now() - prev.blockedAt);
+          setTimeLeft(remainingBlock);
+          if (remainingBlock <= 0 && userIp) {
+            // Block duration expired -> reset limit completely!
+            const fresh = { sessionStart: Date.now(), totalTokens: 0, blockedAt: null };
+            saveLimit(userIp, fresh);
+            setTimeLeft(SESSION_DURATION);
+            return fresh;
+          }
+          return prev;
+        }
+
+        // If not blocked, count down from normal SESSION_DURATION (15 minutes)
+        const remainingSession = SESSION_DURATION - (Date.now() - prev.sessionStart);
+        setTimeLeft(remainingSession);
+        if (remainingSession <= 0 && userIp) {
+          const fresh = { sessionStart: Date.now(), totalTokens: 0, blockedAt: null };
           saveLimit(userIp, fresh);
           setTimeLeft(SESSION_DURATION);
           return fresh;
@@ -1667,7 +1271,6 @@ export const ChatPage: FC = () => {
     setIsStreaming(true);
 
     // ── Image generation & modification branch ──────────────────────────────
-    const contextualSubject = resolveContextualSubject(msgText, messages);
     const attachedImage = snapshot.find(f => f.isImage);
     const extractedPrompt = extractImagePrompt(msgText);
     const isImageReq = attachedImage
@@ -1678,19 +1281,15 @@ export const ChatPage: FC = () => {
       const botId = `b-${Date.now()}`;
       setIsGeneratingImage(true);
 
-      const resolvedLocQuery = detectLocationQuery(contextualSubject) || detectLocationQuery(msgText);
-      const locData = resolvedLocQuery ? buildLocationData(resolvedLocQuery) : undefined;
-
       setMessages(prev => [...prev, {
         id: botId, role: 'bot', text: '', timestamp: new Date(),
         isStreaming: true, isImageGeneration: true,
-        locationData: locData,
       }]);
 
       try {
         let promptText = isImageReq;
         if (/carikan fotonya|mana fotonya|tampilkan foto|lihat foto|foto tempat/i.test(promptText) || promptText.length < 15) {
-          promptText = `Real high resolution photograph of ${contextualSubject} landmark Indonesia`;
+          promptText = `Real high resolution photograph of ${msgText} landmark Indonesia`;
         } else if (/logo|lambang|simbol|brand/i.test(isImageReq) || /logo|lambang|simbol|brand/i.test(msgText)) {
           promptText = `Professional logo design: ${isImageReq}. Clean vector graphic, high resolution, minimalist modern logo aesthetic, solid white background, iconic branding.`;
         }
@@ -1704,7 +1303,6 @@ export const ChatPage: FC = () => {
 
         let base64 = '';
         let mimeType = 'image/jpeg';
-        let lastErr: Error | null = null;
 
         // Multimodel fallback loop: coba model 1 (gemini-3.1-flash-image), jika gagal lanjut ke opsi 2 (nano-banana), dst.
         for (const modelName of IMAGE_MODELS) {
@@ -1728,7 +1326,6 @@ export const ChatPage: FC = () => {
             if (base64) break; // Berhasil! Keluar dari loop fallback
           } catch (err) {
             console.warn(`Model gambar '${modelName}' gagal/error, mencoba model berikutnya...`, err);
-            lastErr = err instanceof Error ? err : new Error(String(err));
           }
         }
 
@@ -1750,24 +1347,40 @@ export const ChatPage: FC = () => {
         // Tier 3 Fallback Engine: Dynamic SVG Canvas Graphic Generator
         if (!base64) {
           console.warn('Switching to Tier 3 SVG Graphic Generator fallback...');
-          const fallback = generateSvgFallbackBase64(contextualSubject);
+          const fallback = generateSvgFallbackBase64(msgText);
           base64 = fallback.base64;
           mimeType = fallback.mimeType;
         }
 
         setMessages(prev => prev.map(m => m.id === botId ? {
           ...m,
-          text: attachedImage ? '✅ Gambar berhasil dimodifikasi!' : `✅ Foto ${contextualSubject} berhasil dibuat!`,
+          text: attachedImage ? '✅ Gambar berhasil dimodifikasi!' : `✅ Foto ${msgText} berhasil dibuat!`,
           generatedImages: [base64],
           generatedMime: mimeType,
           isStreaming: false,
           isImageGeneration: false,
-          locationData: locData || m.locationData,
         } : m));
 
-        const added = estimateTokens(isImageReq) + 200;
+        let added = Math.ceil(isImageReq.length / 4) + 200;
+        try {
+          const tokenRes = await aiRef.current!.models.countTokens({
+            model: IMAGE_MODELS[0] || MODELS[0],
+            contents: isImageReq,
+          });
+          if (tokenRes && tokenRes.totalTokens) {
+            added = tokenRes.totalTokens + 200;
+          }
+        } catch (e) {
+          console.warn('Fallback to estimateTokens for image:', e);
+        }
+
+        setMessages(prev => prev.map(m => m.id === botId ? { ...m, tokenCount: added } : m));
+
         setLimitData(prev => {
-          const updated = { ...prev, totalTokens: prev.totalTokens + added };
+          const newTokens = prev.totalTokens + added;
+          const isNowBlocked = newTokens >= MAX_TOKENS;
+          const blockedAt = isNowBlocked ? (prev.blockedAt || Date.now()) : null;
+          const updated = { ...prev, totalTokens: newTokens, blockedAt };
           saveLimit(userIp!, updated);
           return updated;
         });
@@ -1808,19 +1421,60 @@ export const ChatPage: FC = () => {
     abortRef.current = abort;
 
     let fullText = '';
-    try {
-      const stream = await aiRef.current!.models.generateContentStream({
-        model: MODEL,
-        contents,
-        config: { systemInstruction: SYSTEM_INSTRUCTION },
-      });
+    let currentLength = 0;
+    let streamFinished = false;
 
-      for await (const chunk of stream) {
+    // Start a typewriter loop for smooth streaming rendering
+    const typewriterInterval = setInterval(() => {
+      if (currentLength < fullText.length) {
+        const diff = fullText.length - currentLength;
+        // Easing-based typing speed: catches up ~90% in 0.6s (30 steps @ 20ms) using a 0.12 factor
+        const step = Math.max(0.25, diff * 0.12);
+        currentLength = Math.min(fullText.length, currentLength + step);
+        const typed = fullText.slice(0, Math.floor(currentLength));
+        setMessages(prev => prev.map(m => m.id === botId ? { ...m, text: typed } : m));
+      } else if (streamFinished) {
+        clearInterval(typewriterInterval);
+      }
+    }, 20);
+
+    try {
+      let stream = null;
+      let textError = null;
+      let selectedModel = MODELS[0];
+
+      for (const modelName of MODELS) {
         if (abort.signal.aborted) break;
-        const piece = chunk.text ?? '';
-        fullText += piece;
-        setMessages(prev => prev.map(m => m.id === botId ? { ...m, text: fullText } : m));
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        try {
+          console.log(`Attempting generateContentStream with model: ${modelName}`);
+          stream = await aiRef.current!.models.generateContentStream({
+            model: modelName,
+            contents,
+            config: { systemInstruction: SYSTEM_INSTRUCTION },
+          });
+          selectedModel = modelName;
+          break; // Success!
+        } catch (err) {
+          console.warn(`Model ${modelName} failed, trying next:`, err);
+          textError = err;
+        }
+      }
+
+      if (!stream && !abort.signal.aborted) {
+        throw textError || new Error('All models failed to respond.');
+      }
+
+      if (stream) {
+        for await (const chunk of stream) {
+          if (abort.signal.aborted) break;
+          const piece = chunk.text ?? '';
+          fullText += piece;
+        }
+      }
+
+      // Wait a moment for typewriter to finish catching up
+      while (currentLength < fullText.length && !abort.signal.aborted) {
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
 
       setHistory(prev => [
@@ -1830,22 +1484,33 @@ export const ChatPage: FC = () => {
       ]);
 
       if (!abort.signal.aborted) {
-        const added = estimateTokens(fullText);
+        let added = Math.ceil(fullText.length / 4);
+        try {
+          const tokenRes = await aiRef.current!.models.countTokens({
+            model: selectedModel,
+            contents: fullText,
+          });
+          if (tokenRes && tokenRes.totalTokens) {
+            added = tokenRes.totalTokens;
+          }
+        } catch (e) {
+          console.warn('Fallback to estimateTokens for response:', e);
+        }
+
+        setMessages(prev => prev.map(m => m.id === botId ? { ...m, tokenCount: added } : m));
+
         setLimitData(prev => {
-          const updated = { ...prev, totalTokens: prev.totalTokens + added };
+          const newTokens = prev.totalTokens + added;
+          const isNowBlocked = newTokens >= MAX_TOKENS;
+          const blockedAt = isNowBlocked ? (prev.blockedAt || Date.now()) : null;
+          const updated = { ...prev, totalTokens: newTokens, blockedAt };
           saveLimit(userIp!, updated);
           return updated;
         });
-
-        // Detect location query and attach Google Maps Location Card
-        const locQuery = detectLocationQuery(msgText) || detectLocationQuery(fullText);
-        if (locQuery) {
-          const locData = buildLocationData(locQuery);
-          setMessages(prev => prev.map(m => m.id === botId ? { ...m, locationData: locData } : m));
-        }
       }
 
     } catch (err) {
+      clearInterval(typewriterInterval);
       if (abort.signal.aborted) {
         fullText = fullText || '⏹ Respons dihentikan.';
       } else {
@@ -1857,7 +1522,10 @@ export const ChatPage: FC = () => {
         m.id === botId ? { ...m, text: fullText, isError: !abort.signal.aborted } : m
       ));
     } finally {
-      setMessages(prev => prev.map(m => m.id === botId ? { ...m, isStreaming: false } : m));
+      streamFinished = true;
+      clearInterval(typewriterInterval);
+      // Ensure the final state shows the exact fullText
+      setMessages(prev => prev.map(m => m.id === botId ? { ...m, text: fullText || m.text, isStreaming: false } : m));
       setIsStreaming(false);
       abortRef.current = null;
     }
@@ -1891,20 +1559,20 @@ export const ChatPage: FC = () => {
     }
   };
 
-  // ── Render Maintenance Screen if Maintenance Mode Active ──────────────────────
-  if (isMaintenanceMode) {
+
+  if (isLoadingSession) {
     return (
-      <MaintenanceScreen
-        endTime={maintenanceEndTime}
-        onFinished={() => setIsMaintenanceMode(false)}
-      />
+      <div className="min-h-screen bg-[#08080C] text-slate-100 flex flex-col items-center justify-center gap-3 font-mono text-sm">
+        <div className="w-8 h-8 rounded-full border-2 border-red-500 border-t-transparent animate-spin" />
+        <p className="text-slate-400 animate-pulse">Memuat Sesi Chat (IP Session UUID)...</p>
+      </div>
     );
   }
 
   // ── Render Main Chat UI ───────────────────────────────────────────────────
   return (
     <div
-      className="min-h-screen bg-[#08080C] flex flex-col text-slate-100 font-sans selection:bg-red-600 selection:text-white"
+      className="fixed inset-0 bg-[#08080C] flex flex-col text-slate-100 font-sans selection:bg-red-600 selection:text-white overflow-hidden"
       onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
     >
 
@@ -1925,7 +1593,7 @@ export const ChatPage: FC = () => {
       </AnimatePresence>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-[#08080C]/95 backdrop-blur-md border-b border-red-500/20 shadow-[0_2px_30px_rgba(0,0,0,0.9)] pt-2.5 sm:pt-0">
+      <header className="relative z-50 flex-shrink-0 bg-[#08080C]/95 backdrop-blur-md border-b border-red-500/20 shadow-[0_2px_30px_rgba(0,0,0,0.9)] pt-[calc(10px+env(safe-area-inset-top))] sm:pt-0">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 flex items-center justify-between h-14 sm:h-16 gap-2">
 
           <Link
@@ -2093,25 +1761,19 @@ export const ChatPage: FC = () => {
                     </div>
                   )}
 
-                  {/* Google Maps Location Card */}
-                  {msg.locationData && (
-                    <div className="w-full max-w-full sm:max-w-md">
-                      <GoogleMapsCard
-                        location={msg.locationData}
-                        onZoomImage={(photoUrl, title) =>
-                          setZoomImage({
-                            src: photoUrl,
-                            prompt: title,
-                            filename: `${title.toLowerCase().replace(/\s+/g, '-')}-location.jpg`,
-                          })
-                        }
-                      />
-                    </div>
-                  )}
 
-                  <span className="text-[10px] font-mono text-slate-600 px-1">
-                    {msg.timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+
+                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 px-1">
+                    <span>
+                      {msg.timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    {msg.role === 'bot' && msg.tokenCount !== undefined && (
+                      <>
+                        <span>•</span>
+                        <span className="text-slate-500/80">{msg.tokenCount} tokens</span>
+                      </>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             ))}
@@ -2193,8 +1855,8 @@ export const ChatPage: FC = () => {
       </main>
 
       {/* ── Input Area ──────────────────────────────────────────────────────── */}
-      <div className="sticky bottom-0 z-30 bg-[#08080C]/95 backdrop-blur-md border-t border-slate-800/80 shadow-[0_-4px_20px_rgba(0,0,0,0.8)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 space-y-3">
+      <div className="relative z-30 flex-shrink-0 bg-[#08080C]/95 backdrop-blur-md border-t border-slate-800/80 shadow-[0_-4px_20px_rgba(0,0,0,0.8)]">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:py-4 space-y-2 sm:space-y-3">
 
           {/* Quick prompts */}
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -2285,7 +1947,10 @@ export const ChatPage: FC = () => {
           {!isBlocked && (
             <div className="flex items-center gap-2">
               {/* Attach */}
-              <button onClick={() => fileRef.current?.click()} disabled={!canSend}
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); fileRef.current?.click(); }}
+                disabled={!canSend}
                 title="Lampirkan gambar / file"
                 className={`relative w-11 h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${attachments.length > 0
                   ? 'bg-red-500/15 border-red-500/50 text-red-400'
@@ -2299,7 +1964,14 @@ export const ChatPage: FC = () => {
                   </span>
                 )}
               </button>
-              <input ref={fileRef} type="file" multiple accept={ACCEPTED_TYPES.join(',')} onChange={handleFileChange} className="hidden" />
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept="image/*,application/pdf,text/*,application/json"
+                onChange={handleFileChange}
+                className="hidden"
+              />
 
               {/* Voice Input (Mic) */}
               <button
@@ -2326,8 +1998,8 @@ export const ChatPage: FC = () => {
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKey}
                   disabled={!canSend}
-                  placeholder={isListening ? 'Mendengarkan suara Anda...' : attachments.length > 0 ? 'Tambahkan keterangan (opsional)...' : 'Ketik pesan, suara (mic), atau drop file...'}
-                  className="w-full px-4 py-3 pr-10 rounded-xl bg-[#0F0F16] border border-slate-800 focus:border-red-500/70 text-white placeholder-slate-600 focus:outline-none transition-colors font-mono text-sm disabled:opacity-60"
+                  placeholder={isListening ? 'Mendengarkan...' : attachments.length > 0 ? 'Keterangan...' : 'Ketik pesan...'}
+                  className="w-full px-4 py-3 pr-10 rounded-xl bg-[#0F0F16] border border-slate-800 focus:border-red-500/70 text-white placeholder-slate-600 focus:outline-none transition-colors font-mono text-base sm:text-sm disabled:opacity-60"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] text-slate-600">↵</span>
               </div>

@@ -61,23 +61,25 @@ export const Navbar: FC = () => {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isScrolled
-        ? 'bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/25 shadow-[0_4px_30px_rgba(0,0,0,0.8)] py-3.5'
-        : 'bg-gradient-to-b from-[#08080C]/80 via-[#08080C]/40 to-transparent backdrop-blur-sm py-6'
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled
+        ? 'bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/25 shadow-[0_4px_30px_rgba(0,0,0,0.8)] py-3'
+        : 'bg-gradient-to-b from-[#08080C]/80 via-[#08080C]/40 to-transparent backdrop-blur-sm py-3.5 md:py-6'
         }`}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3">
         {/* Logo */}
-        <a href="#" onClick={(e) => handleNavClick(e, '#')} className="flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-lg bg-red-600/10 border border-red-500/40 flex items-center justify-center text-red-500 group-hover:bg-red-600 group-hover:text-white transition-all duration-300 group-hover:glow-red">
+        <a href="#" onClick={(e) => handleNavClick(e, '#')} className="flex items-center gap-2.5 sm:gap-3 group min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-red-600/10 border border-red-500/40 flex items-center justify-center text-red-500 group-hover:bg-red-600 group-hover:text-white transition-all duration-300 group-hover:glow-red flex-shrink-0">
             <Terminal className="w-5 h-5" />
           </div>
-          <div className="flex flex-col">
-            <span className="font-extrabold tracking-wider text-lg text-white group-hover:text-red-400 transition-colors flex items-center gap-1.5">
+          <div className="flex flex-col min-w-0">
+            <span className="font-extrabold tracking-wider text-base sm:text-lg text-white group-hover:text-red-400 transition-colors flex items-center gap-1.5">
               Fetsu<span className="text-red-500">.</span> ID
             </span>
-            <span className="text-[10px] font-mono text-slate-400 tracking-widest uppercase">
-              Fetsu Siahaan • Enterprise Arch
+            {/* Full byline only where it fits — on a phone it wrapped to two lines
+                and pushed the bar taller than the logo. */}
+            <span className="text-[10px] font-mono text-slate-400 tracking-widest uppercase truncate">
+              <span className="hidden min-[400px]:inline">Fetsu Siahaan • </span>Enterprise Arch
             </span>
           </div>
         </a>

@@ -8,11 +8,13 @@ import {
   RefreshCw, ChevronRight, Paperclip,
   X, FileText, AlertCircle, StopCircle,
   Copy, Check, Clock, Lock, Download, Sparkles,
-  ZoomIn, ZoomOut, Mic, MicOff,
+  ZoomIn, ZoomOut, Mic, MicOff, Image as ImageIcon,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
 import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../utils/session';
+import { putImages, loadSessionImages, clearSessionImages } from '../utils/imageStore';
+import type { StoredImage } from '../utils/imageStore';
 import { CHAT_CONFIG, SYSTEM_INSTRUCTION } from '../config/chatConfig';
 import { SEOHead } from '../components/SEOHead';
 
@@ -289,6 +291,28 @@ function extractImagePrompt(text: string): string | null {
  * normal chat path, which already forwards inlineData to the model.
  */
 const IMAGE_EDIT_INTENT = /\b(edit|ubah|ganti|modifikasi|modif|hapus|tambah(?:kan)?|hilangkan|jadikan|buat(?:kan|in)?|bikin|warnai|perbaiki|retouch|upscale|crop|potong|blur|filter|restore|colorize|remove|replace|change|redraw|convert)\b/i;
+
+/**
+ * Generated images have no attachment id of their own, so they are keyed by the
+ * message that produced them plus their position in that message.
+ */
+function generatedImageKey(messageId: string, index: number) {
+  return `gen:${messageId}:${index}`;
+}
+
+/** Rebuilds a message's generated-image array from the IndexedDB read. */
+function restoreGeneratedImages(
+  messageId: string,
+  imageMap: Map<string, StoredImage>,
+): string[] | null {
+  const out: string[] = [];
+  for (let i = 0; ; i++) {
+    const hit = imageMap.get(generatedImageKey(messageId, i));
+    if (!hit) break;
+    out.push(hit.base64);
+  }
+  return out.length > 0 ? out : null;
+}
 
 function downloadBase64Image(base64: string, filename: string, mime = 'image/jpeg') {
   const link = document.createElement('a');
@@ -753,7 +777,16 @@ const Cursor: FC = () => (
 // ─── Attachment chip ──────────────────────────────────────────────────────────
 const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void; onZoom?: () => void }> = ({ file, onRemove, onZoom }) => (
   <div className="relative group flex-shrink-0">
-    {file.isImage ? (
+    {file.isImage && !file.base64 ? (
+      // Restored from a session record whose payload is still loading from
+      // IndexedDB, or was never stored. A placeholder beats a broken <img>.
+      <div
+        className="w-16 h-16 rounded-xl border border-slate-800 bg-slate-900/60 flex items-center justify-center"
+        title={file.name}
+      >
+        <ImageIcon className="w-5 h-5 text-slate-700" />
+      </div>
+    ) : file.isImage ? (
       <div
         onClick={onZoom}
         className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-700 bg-slate-900 cursor-pointer group/chip"
@@ -1180,6 +1213,10 @@ export const ChatPage: FC = () => {
 
   const hasInitializedSession = useRef(false);
 
+  // Ids already written to IndexedDB this session — re-writing an unchanged
+  // 500 KB payload on every keystroke would be pure waste.
+  const persistedImageIds = useRef<Set<string>>(new Set());
+
   // ── Fetch IP, load & restore Session JSON by sessionId / IP ─────────────────
   useEffect(() => {
     if (hasInitializedSession.current) return;
@@ -1190,10 +1227,35 @@ export const ChatPage: FC = () => {
     const savedSession = loadSessionJSON(activeSid);
     if (savedSession) {
       if (savedSession.messages && savedSession.messages.length > 0) {
-        setMessages(savedSession.messages.map(m => ({
+        const restored: Message[] = savedSession.messages.map(m => ({
           ...m,
           timestamp: new Date(m.timestamp),
-        })));
+          // A stream interrupted by the reload would otherwise restore stuck
+          // mid-typing, with a blinking cursor that never resolves.
+          isStreaming: false,
+          isImageGeneration: false,
+        }));
+        setMessages(restored);
+
+        // Images live in IndexedDB, not in the session record — localStorage
+        // cannot hold base64 payloads. Paint the text first, then fill the
+        // pictures back in once the async read lands.
+        loadSessionImages(activeSid).then(imageMap => {
+          if (imageMap.size === 0) return;
+          // Mark as already-stored so the next auto-save doesn't rewrite them.
+          for (const key of imageMap.keys()) persistedImageIds.current.add(key);
+          setMessages(prev => prev.map(msg => ({
+            ...msg,
+            attachments: msg.attachments?.map(a =>
+              a.base64 ? a : { ...a, base64: imageMap.get(a.id)?.base64 },
+            ),
+            generatedImages: msg.generatedImages?.length
+              ? msg.generatedImages
+              : restoreGeneratedImages(msg.id, imageMap) ?? undefined,
+            generatedMime:
+              msg.generatedMime ?? imageMap.get(generatedImageKey(msg.id, 0))?.mimeType,
+          })));
+        });
       } else {
         setMessages(defaultWelcomeMessage());
       }
@@ -1224,10 +1286,11 @@ export const ChatPage: FC = () => {
       .catch(() => clearTimeout(timer));
   }, [sessionId, userIp]);
 
-  // ── Auto-save session state to JSON ─────────────────────────────────────────
-  // Debounced, and strips base64 payloads: persisting inline image data blows
-  // past the ~5 MB localStorage quota and the serialization cost on every
-  // keystroke/token is what kills low-memory mobile tabs.
+  // ── Auto-save session state ─────────────────────────────────────────────────
+  // Split by storage medium: text and metadata go to localStorage, base64 image
+  // payloads go to IndexedDB. Inlining images in the session record blows past
+  // the ~5 MB quota, and serializing them on every keystroke/token is what kills
+  // low-memory mobile tabs.
   useEffect(() => {
     if (isLoadingSession) return;
     const activeSid = sessionId || (userIp ? ipToUuid(userIp) : null);
@@ -1242,8 +1305,12 @@ export const ChatPage: FC = () => {
         messages: messages.map(m => ({
           ...m,
           timestamp: m.timestamp.toISOString(),
+          isStreaming: undefined,
+          // Payloads are stripped here and rehydrated from IndexedDB on load.
+          // Attachment metadata (id, name, size, mimeType) is kept so the
+          // message can be rebuilt even if the image read fails.
           generatedImages: undefined,
-          attachments: m.attachments?.map(a => ({ ...a, base64: undefined })),
+          attachments: m.attachments?.map(a => ({ ...a, base64: undefined, fileObj: undefined })),
         })),
         history: history.map(h => ({
           ...h,
@@ -1252,6 +1319,32 @@ export const ChatPage: FC = () => {
         limitData,
       });
       setPersistFailed(!ok);
+
+      const pending: StoredImage[] = [];
+      const seen = persistedImageIds.current;
+      const now = Date.now();
+
+      for (const m of messages) {
+        if (m.isStreaming) continue; // a half-generated image is not worth storing
+        for (const a of m.attachments ?? []) {
+          if (a.isImage && a.base64 && !seen.has(a.id)) {
+            seen.add(a.id);
+            pending.push({ id: a.id, sessionId: activeSid, base64: a.base64, mimeType: a.mimeType, createdAt: now });
+          }
+        }
+        m.generatedImages?.forEach((b64, idx) => {
+          const key = generatedImageKey(m.id, idx);
+          if (b64 && !seen.has(key)) {
+            seen.add(key);
+            pending.push({
+              id: key, sessionId: activeSid, base64: b64,
+              mimeType: m.generatedMime ?? 'image/png', createdAt: now,
+            });
+          }
+        });
+      }
+
+      void putImages(pending);
     }, 400);
 
     return () => clearTimeout(save);
@@ -1716,6 +1809,11 @@ export const ChatPage: FC = () => {
         limitData,
       });
       setPersistFailed(!ok);
+
+      // Drop the binaries too, otherwise a reset frees the text but leaves the
+      // images occupying storage with nothing referencing them.
+      persistedImageIds.current.clear();
+      void clearSessionImages(activeSid);
     }
   };
 
@@ -1901,7 +1999,7 @@ export const ChatPage: FC = () => {
                         <AttachmentChip
                           key={f.id}
                           file={f}
-                          onZoom={f.isImage ? () => setZoomImage({
+                          onZoom={f.isImage && f.base64 ? () => setZoomImage({
                             src: `data:${f.mimeType};base64,${f.base64}`,
                             prompt: f.name,
                             filename: f.name,

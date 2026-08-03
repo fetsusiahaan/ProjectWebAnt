@@ -1,0 +1,11 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+Disallow: /api/private/
+Disallow: /*?*session_token=
+
+# Host
+Host: https://fetsu.id
+
+# Sitemaps
+Sitemap: https://fetsu.id/sitemap.xml

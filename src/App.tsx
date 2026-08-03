@@ -14,6 +14,8 @@ import { ChatPage } from './pages/ChatPage';
 
 import { LoadingScreen } from './components/LoadingScreen';
 
+import { SEOHead } from './components/SEOHead';
+
 // ── Home Page ────────────────────────────────────────────────────────────────
 function HomePage() {
   const location = useLocation();
@@ -32,6 +34,13 @@ function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#08080C] text-slate-100 flex flex-col selection:bg-red-600 selection:text-white">
+      {/* Dynamic SEO Meta & Schema Injection */}
+      <SEOHead
+        title="Fetsu Siahaan — Software Engineer • Backend Developer • Solution Architect"
+        description="Halo, Saya Fetsu Siahaan. Saya membantu mengembangkan aplikasi modern, REST API, dan sistem enterprise yang cepat, aman, dan scalable."
+        canonicalUrl="https://fetsu.id/"
+      />
+
       {/* 2-Second Bouncing Ball Loading Screen */}
       <LoadingScreen durationMs={2000} />
 
@@ -62,33 +71,11 @@ function ChatRedirect() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch('https://api.ipify.org?format=json')
-      .then(r => r.json())
-      .then(data => {
-        const ip = (data.ip as string) || '127.0.0.1';
-        const uuid = ipToUuid(ip);
-
-        try {
-          const registry = JSON.parse(localStorage.getItem('fetsubot_ip_sessions_json') || '{}');
-          registry[ip] = uuid;
-          localStorage.setItem('fetsubot_ip_sessions_json', JSON.stringify(registry, null, 2));
-        } catch { /* noop */ }
-
-        navigate(`/chat/${uuid}`, { replace: true });
-      })
-      .catch(() => {
-        const fallbackIp = '127.0.0.1';
-        const uuid = ipToUuid(fallbackIp);
-        navigate(`/chat/${uuid}`, { replace: true });
-      });
+    const uuid = ipToUuid('127.0.0.1');
+    navigate(`/chat/${uuid}`, { replace: true });
   }, [navigate]);
 
-  return (
-    <div className="min-h-screen bg-[#08080C] text-slate-100 flex flex-col items-center justify-center gap-3 font-mono text-sm">
-      <div className="w-8 h-8 rounded-full border-2 border-red-500 border-t-transparent animate-spin" />
-      <p className="text-slate-400">Memuat Sesi Chat (IP Session UUID)...</p>
-    </div>
-  );
+  return null;
 }
 
 // ── App Router ───────────────────────────────────────────────────────────────

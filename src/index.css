@@ -59,6 +59,21 @@ html {
     border-color: rgba(255, 30, 56, 0.75);
     box-shadow: 0 0 20px rgba(255, 30, 56, 0.25);
   }
+
+  /* Horizontal strips (chat quick-prompts) read as clutter with a visible bar */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Fades the right edge of a scroll strip so cut-off items look intentional */
+  .fade-edge-r {
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), transparent 100%);
+  }
 }
 
 /* Custom Scrollbar */

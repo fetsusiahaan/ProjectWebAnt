@@ -50,9 +50,11 @@ export function loadSessionJSON(sid: string): ChatSessionJSON | null {
   }
 }
 
-export function saveSessionJSON(session: ChatSessionJSON) {
+export function saveSessionJSON(session: ChatSessionJSON): boolean {
   try {
-    localStorage.setItem(sessionStorageKey(session.sessionId), JSON.stringify(session, null, 2));
+    // No pretty-printing: indentation inflates the payload against a ~5 MB quota
+    // for bytes nobody reads.
+    localStorage.setItem(sessionStorageKey(session.sessionId), JSON.stringify(session));
 
     // Also update master IP & Sessions JSON registry
     const registryRaw = localStorage.getItem('fetsubot_sessions_registry_json') || '{}';
@@ -62,8 +64,10 @@ export function saveSessionJSON(session: ChatSessionJSON) {
       lastActive: session.lastActive,
       messageCount: session.messages ? session.messages.length : 0,
     };
-    localStorage.setItem('fetsubot_sessions_registry_json', JSON.stringify(registry, null, 2));
-  } catch {
-    /* noop */
+    localStorage.setItem('fetsubot_sessions_registry_json', JSON.stringify(registry));
+    return true;
+  } catch (err) {
+    console.warn('Session persist failed (storage quota?):', err);
+    return false;
   }
 }

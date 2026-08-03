@@ -2,19 +2,15 @@
 
 export const CHAT_CONFIG = {
   apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
-  model: 'gemini-3.0-flash',
+  model: 'gemini-3.6-flash',
   models: [
     'gemini-3.6-flash',
     'gemini-3.5-flash',
-    'gemini-3.0-flash',
   ],
   imageModel: 'gemini-3.1-flash-image',
   imageModels: [
     'gemini-3.1-flash-image',
-    'nano-banana',             // Opsi 2 (Nano Banana)
-    'imagen-3.0-generate-002',  // Fallback 3
-    'imagen-3.0-fast-generate-001',
-    'gemini-2.5-flash-image',
+    'gemini-3-pro-image',
   ],
   maxTokens: 4000,
   sessionDurationMs: 15 * 60 * 1000, // 15 minutes for normal token reset

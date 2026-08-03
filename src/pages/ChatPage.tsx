@@ -14,6 +14,7 @@ import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
 import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../utils/session';
 import { CHAT_CONFIG, SYSTEM_INSTRUCTION } from '../config/chatConfig';
+import { SEOHead } from '../components/SEOHead';
 
 const API_KEY = CHAT_CONFIG.apiKey;
 const MODELS = CHAT_CONFIG.models || [CHAT_CONFIG.model || 'gemini-3.6-flash'];
@@ -39,7 +40,9 @@ interface AttachedFile {
   name: string;
   size: number;
   mimeType: string;
-  base64: string;
+  base64?: string;
+  previewUrl?: string;
+  fileObj?: File;
   isImage: boolean;
 }
 
@@ -58,13 +61,92 @@ interface Message {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function fileToBase64(file: File): Promise<string> {
+/** Ceiling for anything sent verbatim (documents) and for post-compression images. */
+const MAX_FILE_BYTES = 1 * 1024 * 1024;
+/** Source ceiling for images — they are downscaled before reaching this budget. */
+const MAX_IMAGE_SOURCE_BYTES = 12 * 1024 * 1024;
+
+function readAsBase64(file: Blob, fallbackMime: string): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).split(',')[1]);
-    reader.onerror = reject;
+    reader.onload = () => {
+      const parts = (reader.result as string).split(',');
+      resolve({ base64: parts[1] || '', mimeType: file.type || fallbackMime });
+    };
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
     reader.readAsDataURL(file);
   });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, mime: string, quality: number): Promise<Blob | null> {
+  return new Promise(resolve => canvas.toBlob(resolve, mime, quality));
+}
+
+/**
+ * Downscales an image before it ever reaches state.
+ *
+ * Uses createImageBitmap + toBlob rather than <img> + toDataURL. A 12 MP phone
+ * photo is only ~1 MB on disk but ~48 MB once decoded; HTMLImageElement holds
+ * that until GC decides otherwise, and toDataURL then builds a multi-megabyte
+ * string synchronously on the main thread. On low-memory mobile that combination
+ * gets the tab killed and reloaded. ImageBitmap can be released immediately via
+ * close(), and toBlob keeps the encode off the critical path.
+ */
+async function compressImageIfNeeded(
+  file: File,
+  maxDimension = 1600,
+  quality = 0.85,
+): Promise<{ base64: string; mimeType: string }> {
+  // Formats that must survive byte-for-byte (animation, vector) skip the canvas.
+  if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') {
+    return readAsBase64(file, 'application/octet-stream');
+  }
+
+  if (typeof createImageBitmap !== 'function') {
+    return readAsBase64(file, 'image/jpeg');
+  }
+
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+
+    let { width, height } = bitmap;
+    if (width > maxDimension || height > maxDimension) {
+      if (width > height) {
+        height = Math.round((height * maxDimension) / width);
+        width = maxDimension;
+      } else {
+        width = Math.round((width * maxDimension) / height);
+        height = maxDimension;
+      }
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return await readAsBase64(file, 'image/jpeg');
+
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    bitmap = null;
+
+    const targetMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+    const blob = await canvasToBlob(canvas, targetMime, quality);
+
+    // Release the backing store before the base64 string is built.
+    canvas.width = 0;
+    canvas.height = 0;
+
+    if (!blob) return await readAsBase64(file, 'image/jpeg');
+    const { base64 } = await readAsBase64(blob, targetMime);
+    return { base64, mimeType: targetMime };
+  } catch (err) {
+    console.warn('Image compression failed, falling back to raw read:', err);
+    return readAsBase64(file, 'image/jpeg');
+  } finally {
+    bitmap?.close();
+  }
 }
 
 function formatFileSize(bytes: number) {
@@ -177,17 +259,15 @@ const IMAGE_KEYWORDS = [
   'buatkan logo', 'buat logo', 'bikin logo', 'generate logo',
   'desain logo', 'desainkan logo', 'rancang logo', 'desain kan logo',
   'create logo', 'make logo', 'design logo', 'buatin logo',
-  'ilustrasi logo', 'gambar logo', 'gambarkan logo', 'edit logo',
-  'modifikasi logo', 'ubah logo', 'variasi logo', 'logo',
+  'ilustrasi logo', 'gambar logo', 'gambarkan logo',
   'buatkan gambar', 'buat gambar', 'bikin gambar', 'generate gambar',
   'gambarkan', 'tolong gambarkan', 'buatin gambar', 'ilustrasikan',
   'create image', 'generate image', 'draw me', 'make image',
   'buatkan foto', 'buat foto', 'bikin foto', 'buat ilustrasi',
-  'edit gambar', 'modifikasi gambar', 'ubah gambar', 'edit foto',
-  'modifikasi foto', 'ubah foto', 'ganti background', 'edit image',
-  'modify image', 'transform image', 'filter gambar', 'style gambar',
-  'ubah warna', 'tambahkan pada gambar', 'perbaiki gambar', 'variasi gambar',
-  'tambahkan', 'tambah', 'edit', 'ubah', 'ganti', 'lukis',
+  'edit gambar', 'modifikasi gambar', 'edit foto',
+  'modifikasi foto', 'ganti background', 'edit image',
+  'modify image', 'transform image', 'filter gambar',
+  'lukiskan gambar', 'lukis gambar',
 ];
 
 /** Returns the image prompt if detected, otherwise null */
@@ -203,16 +283,12 @@ function extractImagePrompt(text: string): string | null {
   return null;
 }
 
-function isImageModifyIntent(text: string): boolean {
-  const lower = text.toLowerCase();
-  const keywords = [
-    'edit', 'ubah', 'modifikasi', 'ganti', 'perbaiki', 'filter',
-    'tambah', 'tambahkan', 'hapus', 'style', 'jadikan', 'variasi', 'revisi', 'transform',
-    'gambar', 'foto', 'image', 'background', 'warna', 'isi', 'isikan', 'lukis',
-    'logo', 'desain', 'rancang', 'lambang', 'simbol',
-  ];
-  return keywords.some(k => lower.includes(k));
-}
+/**
+ * Verbs that mean "produce a new image from this one". Anything else asked about
+ * an attachment is a vision question ("ini gambar apa?") and belongs on the
+ * normal chat path, which already forwards inlineData to the model.
+ */
+const IMAGE_EDIT_INTENT = /\b(edit|ubah|ganti|modifikasi|modif|hapus|tambah(?:kan)?|hilangkan|jadikan|buat(?:kan|in)?|bikin|warnai|perbaiki|retouch|upscale|crop|potong|blur|filter|restore|colorize|remove|replace|change|redraw|convert)\b/i;
 
 function downloadBase64Image(base64: string, filename: string, mime = 'image/jpeg') {
   const link = document.createElement('a');
@@ -341,7 +417,7 @@ const GeneratedImageCard: FC<{
   const src = `data:${mime};base64,${base64}`;
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group max-w-xs sm:max-w-sm my-2 shadow-xl">
+    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group w-full sm:max-w-sm my-1 shadow-xl">
       {/* Clickable Image Container */}
       <div
         onClick={onZoom}
@@ -351,7 +427,8 @@ const GeneratedImageCard: FC<{
         <img
           src={src}
           alt={`Generated: ${prompt}`}
-          className="w-full object-cover rounded-t-xl transition-transform duration-300 group-hover/img:scale-105"
+          // Cap the height so a portrait render can't push the action bar off-screen
+          className="w-full max-h-[55vh] sm:max-h-none object-cover transition-transform duration-300 group-hover/img:scale-105"
         />
         {/* Overlay on hover */}
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs">
@@ -361,15 +438,15 @@ const GeneratedImageCard: FC<{
       </div>
 
       {/* Action Bar */}
-      <div className="px-3 py-2.5 bg-slate-900/90 border-t border-slate-700/80 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-mono text-slate-400 truncate flex-1" title={prompt}>
+      <div className="px-2.5 sm:px-3 py-2 sm:py-2.5 bg-slate-900/90 border-t border-slate-700/80 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-mono text-slate-400 truncate flex-1 min-w-0" title={prompt}>
           🎨 &quot;{prompt}&quot;
         </p>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {onZoom && (
             <button
               onClick={onZoom}
-              className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 transition-all active:scale-95"
+              className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 transition-all active:scale-95 flex items-center justify-center"
               title="Mode Zoom"
             >
               <ZoomIn className="w-3.5 h-3.5 text-red-400" />
@@ -377,11 +454,11 @@ const GeneratedImageCard: FC<{
           )}
           <button
             onClick={() => downloadBase64Image(base64, filename, mime)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white text-xs font-semibold shadow-md hover:from-red-500 hover:to-red-400 transition-all active:scale-95"
+            className="h-8 flex items-center gap-1.5 px-2.5 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white text-xs font-semibold shadow-md hover:from-red-500 hover:to-red-400 transition-all active:scale-95"
             title="Download Gambar"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Download</span>
+            <Download className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="hidden min-[380px]:inline">Download</span>
           </button>
         </div>
       </div>
@@ -697,14 +774,14 @@ const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void; onZoom?: (
         )}
       </div>
     ) : (
-      <div className="relative flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
+      <div className="relative flex items-center gap-2 px-2.5 py-2 rounded-xl bg-slate-900 border border-slate-700 max-w-[180px] sm:max-w-none">
         <FileText className="w-4 h-4 text-red-400 flex-shrink-0" />
         <div className="min-w-0">
-          <p className="text-[11px] text-white font-medium truncate max-w-[100px]">{file.name}</p>
+          <p className="text-[11px] text-white font-medium truncate">{file.name}</p>
           <p className="text-[10px] text-slate-500">{formatFileSize(file.size)}</p>
         </div>
         {onRemove && (
-          <button onClick={onRemove} className="ml-1 text-slate-500 hover:text-red-400 transition-colors">
+          <button onClick={onRemove} className="ml-0.5 flex-shrink-0 text-slate-500 hover:text-red-400 transition-colors" title="Hapus Lampiran">
             <X className="w-3.5 h-3.5" />
           </button>
         )}
@@ -742,7 +819,7 @@ const ImageZoomModal: FC<{ image: ZoomImageData | null; onClose: () => void }> =
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={onClose}
-        className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6"
+        className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 select-none touch-none"
       >
         {/* Top Controls */}
         <div className="flex items-center justify-between gap-4 z-10" onClick={(e) => e.stopPropagation()}>
@@ -792,7 +869,7 @@ const ImageZoomModal: FC<{ image: ZoomImageData | null; onClose: () => void }> =
 
         {/* Center Image Viewport */}
         <div
-          className="flex-1 flex items-center justify-center overflow-auto py-4 select-none"
+          className="flex-1 flex items-center justify-center overflow-hidden py-4"
           onClick={(e) => e.stopPropagation()}
         >
           <motion.img
@@ -844,6 +921,7 @@ export const ChatPage: FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [persistFailed, setPersistFailed] = useState(false);
   const [zoomImage, setZoomImage] = useState<ZoomImageData | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [isRecordingMedia, setIsRecordingMedia] = useState(false);
@@ -1050,7 +1128,7 @@ export const ChatPage: FC = () => {
   };
 
   // Rate limit state
-  const [userIp, setUserIp] = useState<string>('');
+  const [userIp, setUserIp] = useState<string>('127.0.0.1');
   const [limitData, setLimitData] = useState<LimitData>({ sessionStart: Date.now(), totalTokens: 0 });
   const [timeLeft, setTimeLeft] = useState<number>(SESSION_DURATION);
 
@@ -1075,94 +1153,108 @@ export const ChatPage: FC = () => {
     isFirstMount.current = false;
   }, [messages, isStreaming]);
 
+  const mainWrapperRef = useRef<HTMLDivElement>(null);
+
+  // Prevent browser viewport pinch-to-zoom and gestures on the entire page/document
+  useEffect(() => {
+    const preventZoom = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
+
+    const preventGesture = (e: Event) => {
+      e.preventDefault();
+    };
+
+    document.addEventListener('touchmove', preventZoom, { passive: false });
+    document.addEventListener('gesturestart', preventGesture, { passive: false });
+    document.addEventListener('gesturechange', preventGesture, { passive: false });
+
+    return () => {
+      document.removeEventListener('touchmove', preventZoom);
+      document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('gesturechange', preventGesture);
+    };
+  }, []);
+
+  const hasInitializedSession = useRef(false);
+
   // ── Fetch IP, load & restore Session JSON by sessionId / IP ─────────────────
   useEffect(() => {
-    fetch('https://api.ipify.org?format=json')
+    if (hasInitializedSession.current) return;
+    hasInitializedSession.current = true;
+
+    const activeSid = sessionId || (userIp ? ipToUuid(userIp) : ipToUuid('127.0.0.1'));
+
+    const savedSession = loadSessionJSON(activeSid);
+    if (savedSession) {
+      if (savedSession.messages && savedSession.messages.length > 0) {
+        setMessages(savedSession.messages.map(m => ({
+          ...m,
+          timestamp: new Date(m.timestamp),
+        })));
+      } else {
+        setMessages(defaultWelcomeMessage());
+      }
+      if (savedSession.history) {
+        setHistory(savedSession.history);
+      }
+      if (savedSession.limitData) {
+        setLimitData(savedSession.limitData);
+        setTimeLeft(calculateTimeLeft(savedSession.limitData));
+      }
+    } else {
+      setMessages(defaultWelcomeMessage());
+      const saved = loadLimit(userIp);
+      setLimitData(saved);
+      setTimeLeft(calculateTimeLeft(saved));
+    }
+    setIsLoadingSession(false);
+
+    // Fetch user IP in background without overwriting messages
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    fetch('https://api.ipify.org?format=json', { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
-        const ip = (data.ip as string) || '127.0.0.1';
-        setUserIp(ip);
-
-        const activeSid = sessionId || ipToUuid(ip);
-        if (!sessionId) {
-          window.history.replaceState(null, '', `/chat/${activeSid}`);
-        }
-
-        const savedSession = loadSessionJSON(activeSid);
-        if (savedSession) {
-          if (savedSession.messages && savedSession.messages.length > 0) {
-            setMessages(savedSession.messages.map(m => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            })));
-          } else {
-            setMessages(defaultWelcomeMessage());
-          }
-          if (savedSession.history) {
-            setHistory(savedSession.history);
-          }
-          if (savedSession.limitData) {
-            setLimitData(savedSession.limitData);
-            setTimeLeft(calculateTimeLeft(savedSession.limitData));
-          }
-        } else {
-          setMessages(defaultWelcomeMessage());
-          const saved = loadLimit(ip);
-          setLimitData(saved);
-          setTimeLeft(calculateTimeLeft(saved));
-        }
+        clearTimeout(timer);
+        if (data.ip) setUserIp(data.ip);
       })
-      .catch(() => {
-        const fallbackIp = '127.0.0.1';
-        setUserIp(fallbackIp);
-        const activeSid = sessionId || ipToUuid(fallbackIp);
-        const savedSession = loadSessionJSON(activeSid);
-        if (savedSession) {
-          if (savedSession.messages && savedSession.messages.length > 0) {
-            setMessages(savedSession.messages.map(m => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            })));
-          } else {
-            setMessages(defaultWelcomeMessage());
-          }
-          if (savedSession.history) {
-            setHistory(savedSession.history);
-          }
-          if (savedSession.limitData) {
-            setLimitData(savedSession.limitData);
-            setTimeLeft(calculateTimeLeft(savedSession.limitData));
-          }
-        } else {
-          setMessages(defaultWelcomeMessage());
-          const saved = loadLimit(fallbackIp);
-          setLimitData(saved);
-        }
-      })
-      .finally(() => {
-        setIsLoadingSession(false);
-        window.scrollTo(0, 0);
-      });
-  }, [sessionId]);
+      .catch(() => clearTimeout(timer));
+  }, [sessionId, userIp]);
 
   // ── Auto-save session state to JSON ─────────────────────────────────────────
+  // Debounced, and strips base64 payloads: persisting inline image data blows
+  // past the ~5 MB localStorage quota and the serialization cost on every
+  // keystroke/token is what kills low-memory mobile tabs.
   useEffect(() => {
     if (isLoadingSession) return;
     const activeSid = sessionId || (userIp ? ipToUuid(userIp) : null);
     if (!activeSid || !userIp) return;
 
-    saveSessionJSON({
-      sessionId: activeSid,
-      ip: userIp,
-      createdAt: new Date().toISOString(),
-      lastActive: new Date().toISOString(),
-      messages: messages.map(m => ({
-        ...m,
-        timestamp: m.timestamp.toISOString(),
-      })),
-      history,
-      limitData,
-    });
+    const save = setTimeout(() => {
+      const ok = saveSessionJSON({
+        sessionId: activeSid,
+        ip: userIp,
+        createdAt: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        messages: messages.map(m => ({
+          ...m,
+          timestamp: m.timestamp.toISOString(),
+          generatedImages: undefined,
+          attachments: m.attachments?.map(a => ({ ...a, base64: undefined })),
+        })),
+        history: history.map(h => ({
+          ...h,
+          parts: h.parts.filter(p => p.text !== undefined),
+        })),
+        limitData,
+      });
+      setPersistFailed(!ok);
+    }, 400);
+
+    return () => clearTimeout(save);
   }, [sessionId, userIp, messages, history, limitData, isLoadingSession]);
 
   // ── Countdown ticker ──────────────────────────────────────────────────────
@@ -1201,7 +1293,9 @@ export const ChatPage: FC = () => {
   // ── Download Session JSON & Copy Session URL ───────────────────────────────
   const downloadSessionJSON = () => {
     const activeSid = sessionId || (userIp ? ipToUuid(userIp) : 'session');
-    const dataObj = loadSessionJSON(activeSid) || {
+    // Built from live state, not storage: the persisted copy has base64 payloads
+    // stripped to stay under quota, so only this path yields a complete export.
+    const dataObj = {
       sessionId: activeSid,
       ip: userIp || '127.0.0.1',
       createdAt: new Date().toISOString(),
@@ -1227,24 +1321,76 @@ export const ChatPage: FC = () => {
   };
 
   // ── File handling ──────────────────────────────────────────────────────────
-  const processFiles = useCallback(async (files: FileList | null) => {
-    if (!files) return;
+  const processFiles = useCallback(async (files: File[] | FileList | null) => {
+    if (!files || files.length === 0) return;
+    const filesArray = Array.isArray(files) ? files : Array.from(files);
     const toAdd: AttachedFile[] = [];
-    for (const file of Array.from(files)) {
-      if (!ACCEPTED_TYPES.includes(file.type)) {
-        setApiError(`Tipe tidak didukung: ${file.name}`); continue;
+
+    for (const file of filesArray) {
+      const isImage = file.type.startsWith('image/');
+      if (!ACCEPTED_TYPES.includes(file.type) && !isImage) {
+        setApiError(`Tipe tidak didukung: ${file.name}`);
+        continue;
       }
-      if (file.size > 10 * 1024 * 1024) {
-        setApiError(`File terlalu besar (maks 10 MB): ${file.name}`); continue;
+      // Images get a far looser gate because compressImageIfNeeded downscales them
+      // first — a 4 MB camera photo lands well under 1 MB. Documents are sent
+      // as-is, so they keep the strict limit.
+      const sizeLimit = isImage ? MAX_IMAGE_SOURCE_BYTES : MAX_FILE_BYTES;
+      if (file.size > sizeLimit) {
+        setApiError(
+          `File terlalu besar (maksimal ${formatFileSize(sizeLimit)}): ${file.name} (${formatFileSize(file.size)})`,
+        );
+        continue;
       }
-      const base64 = await fileToBase64(file);
-      toAdd.push({ id: `${Date.now()}-${file.name}`, name: file.name, size: file.size, mimeType: file.type, base64, isImage: file.type.startsWith('image/') });
+      try {
+        const { base64, mimeType } = await compressImageIfNeeded(file);
+        if (!base64) {
+          setApiError(`Gagal memproses gambar: ${file.name}`);
+          continue;
+        }
+        // Guard the post-compression payload too: a photo that resists downscaling
+        // would otherwise blow the request size at send time instead of here.
+        const encodedBytes = Math.ceil((base64.length * 3) / 4);
+        if (encodedBytes > MAX_FILE_BYTES) {
+          setApiError(
+            `Gambar masih terlalu besar setelah dikompres: ${file.name} (${formatFileSize(encodedBytes)})`,
+          );
+          continue;
+        }
+        toAdd.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${file.name}`,
+          name: file.name,
+          size: encodedBytes,
+          mimeType,
+          base64,
+          isImage: mimeType.startsWith('image/'),
+        });
+      } catch (err) {
+        console.error('File reading error:', err);
+        setApiError(`Gagal membaca file: ${file.name} — ${err instanceof Error ? err.message : 'error tidak dikenal'}`);
+      }
     }
-    setAttachments(prev => [...prev, ...toAdd]);
-    setApiError(null);
+    if (toAdd.length > 0) {
+      setAttachments(prev => [...prev, ...toAdd]);
+      setApiError(null);
+    }
   }, []);
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => { processFiles(e.target.files); e.target.value = ''; };
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const target = e.target;
+    const files = target.files;
+    if (!files || files.length === 0) return;
+
+    // Clone the FileList before clearing the input — the list is live and empties on reset
+    const filesArray = Array.from(files);
+
+    // Reset value so picking the same file twice still fires onChange.
+    // Never remount the input here: on mobile WebKit/Blink the element is still
+    // mid-dialog and unmounting it aborts the page, which reads as a reload.
+    target.value = '';
+
+    processFiles(filesArray);
+  };
   const removeAttachment = (id: string) => setAttachments(prev => prev.filter(f => f.id !== id));
 
   const onDragOver = (e: DragEvent) => { e.preventDefault(); setIsDragging(true); };
@@ -1273,9 +1419,15 @@ export const ChatPage: FC = () => {
     // ── Image generation & modification branch ──────────────────────────────
     const attachedImage = snapshot.find(f => f.isImage);
     const extractedPrompt = extractImagePrompt(msgText);
+    // An attachment alone is not an edit request. "Ini gambar apa?" is a vision
+    // question and must go down the chat path, which already forwards the image
+    // to the model. Only an explicit edit verb (or a bare attachment with no
+    // text at all) routes into the image-generation branch.
     const isImageReq = attachedImage
-      ? (msgText.trim() ? msgText : 'modifikasi gambar ini')
-      : (extractedPrompt || (isImageModifyIntent(msgText) ? msgText : null));
+      ? (!msgText.trim()
+          ? 'modifikasi gambar ini'
+          : (extractedPrompt || (IMAGE_EDIT_INTENT.test(msgText) ? msgText : null)))
+      : extractedPrompt;
 
     if (isImageReq) {
       const botId = `b-${Date.now()}`;
@@ -1288,7 +1440,12 @@ export const ChatPage: FC = () => {
 
       try {
         let promptText = isImageReq;
-        if (/carikan fotonya|mana fotonya|tampilkan foto|lihat foto|foto tempat/i.test(promptText) || promptText.length < 15) {
+        // These rewrites synthesize a scene from scratch, so they must not touch
+        // an edit request — "hapus motor" is short but means edit this photo,
+        // not "photograph of hapus motor".
+        if (attachedImage) {
+          // keep the user's wording verbatim
+        } else if (/carikan fotonya|mana fotonya|tampilkan foto|lihat foto|foto tempat/i.test(promptText) || promptText.length < 15) {
           promptText = `Real high resolution photograph of ${msgText} landmark Indonesia`;
         } else if (/logo|lambang|simbol|brand/i.test(isImageReq) || /logo|lambang|simbol|brand/i.test(msgText)) {
           promptText = `Professional logo design: ${isImageReq}. Clean vector graphic, high resolution, minimalist modern logo aesthetic, solid white background, iconic branding.`;
@@ -1296,7 +1453,7 @@ export const ChatPage: FC = () => {
 
         const reqParts: Part[] = [{ text: promptText }];
         for (const f of snapshot) {
-          if (f.isImage) {
+          if (f.isImage && f.base64) {
             reqParts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
           }
         }
@@ -1406,7 +1563,9 @@ export const ChatPage: FC = () => {
     const userParts: Part[] = [];
     if (msgText) userParts.push({ text: msgText });
     for (const f of snapshot) {
-      userParts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
+      if (f.base64) {
+        userParts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
+      }
     }
 
     const contents = [
@@ -1547,7 +1706,7 @@ export const ChatPage: FC = () => {
 
     const activeSid = sessionId || (userIp ? ipToUuid(userIp) : null);
     if (activeSid) {
-      saveSessionJSON({
+      const ok = saveSessionJSON({
         sessionId: activeSid,
         ip: userIp || '127.0.0.1',
         createdAt: new Date().toISOString(),
@@ -1556,6 +1715,7 @@ export const ChatPage: FC = () => {
         history: [],
         limitData,
       });
+      setPersistFailed(!ok);
     }
   };
 
@@ -1572,9 +1732,15 @@ export const ChatPage: FC = () => {
   // ── Render Main Chat UI ───────────────────────────────────────────────────
   return (
     <div
+      ref={mainWrapperRef}
       className="fixed inset-0 bg-[#08080C] flex flex-col text-slate-100 font-sans selection:bg-red-600 selection:text-white overflow-hidden"
       onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
     >
+      <SEOHead
+        title="AI Assistant Workspace — Fetsu Siahaan Software Architecture"
+        description="Konsultasikan solusi REST API, arsitektur cloud, dan transformasi sistem enterprise secara langsung dengan AI Assistant Fetsu Siahaan."
+        canonicalUrl="https://fetsu.id/chat"
+      />
 
       {/* Drag overlay */}
       <AnimatePresence>
@@ -1586,7 +1752,7 @@ export const ChatPage: FC = () => {
             <div className="border-4 border-dashed border-red-500/70 rounded-3xl p-12 flex flex-col items-center gap-4">
               <Paperclip className="w-14 h-14 text-red-400" />
               <p className="text-white text-2xl font-bold">Lepaskan File di Sini</p>
-              <p className="text-slate-400 text-sm">Gambar, PDF, atau file teks</p>
+              <p className="text-slate-400 text-sm">Gambar, PDF, atau file teks (Maks 1 MB)</p>
             </div>
           </motion.div>
         )}
@@ -1594,27 +1760,27 @@ export const ChatPage: FC = () => {
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header className="relative z-50 flex-shrink-0 bg-[#08080C]/95 backdrop-blur-md border-b border-red-500/20 shadow-[0_2px_30px_rgba(0,0,0,0.9)] pt-[calc(10px+env(safe-area-inset-top))] sm:pt-0">
-        <div className="max-w-4xl mx-auto px-3 sm:px-6 flex items-center justify-between h-14 sm:h-16 gap-2">
+        <div className="max-w-4xl mx-auto px-2.5 sm:px-6 flex items-center h-14 sm:h-16 gap-2 sm:gap-3">
 
           <Link
             to="/"
             title="Kembali ke Beranda"
-            className="p-2 sm:p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-slate-300 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center group flex-shrink-0"
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-slate-900/80 border border-slate-800 text-slate-300 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center group flex-shrink-0"
           >
             <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 group-hover:-translate-x-1 transition-transform" />
           </Link>
 
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-            <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-red-600/15 border border-red-500/40 flex items-center justify-center flex-shrink-0">
+            <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-red-600/15 border border-red-500/40 flex items-center justify-center flex-shrink-0">
               <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" />
               {isStreaming && (
                 <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-emerald-500 border-2 border-[#08080C] animate-pulse" />
               )}
             </div>
             <div className="min-w-0">
-              <p className="font-bold text-white text-xs sm:text-sm leading-tight flex items-center gap-1.5 truncate">
+              <p className="font-bold text-white text-sm leading-tight flex items-center gap-1.5 min-w-0">
                 <span className="truncate">FetsuBot</span>
-                <span className="hidden min-[380px]:inline-flex text-[9px] sm:text-[10px] font-mono bg-amber-500/15 border border-amber-500/30 text-amber-400 px-1.5 py-0.5 rounded flex-shrink-0">
+                <span className="hidden min-[400px]:inline-flex text-[9px] sm:text-[10px] font-mono bg-amber-500/15 border border-amber-500/30 text-amber-400 px-1.5 py-0.5 rounded flex-shrink-0">
                   Gemini 3.6
                 </span>
               </p>
@@ -1625,47 +1791,56 @@ export const ChatPage: FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+          {/* Uniform square hit targets: mixed padding made these look ragged on mobile */}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             <button
               onClick={downloadSessionJSON}
               title="Download Sesi Chat (JSON)"
-              className="p-2 sm:px-2.5 sm:py-1.5 rounded-lg bg-red-600/15 border border-red-500/30 text-red-400 hover:bg-red-600 hover:text-white text-xs font-mono transition-all flex items-center gap-1"
+              className="w-9 h-9 sm:w-auto sm:h-9 sm:px-3 rounded-xl bg-red-600/15 border border-red-500/30 text-red-400 hover:bg-red-600 hover:text-white text-xs font-mono transition-all flex items-center justify-center gap-1.5 active:scale-95"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Download className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
               <span className="hidden sm:inline">JSON</span>
             </button>
             <button
               onClick={copySessionUrl}
               title="Salin Link Sesi"
-              className="p-2 sm:px-2.5 sm:py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs font-mono transition-all flex items-center gap-1"
+              className="w-9 h-9 sm:w-auto sm:h-9 sm:px-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs font-mono transition-all flex items-center justify-center gap-1.5 active:scale-95"
             >
-              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copiedLink ? <Check className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-emerald-400" /> : <Copy className="w-4 h-4 sm:w-3.5 sm:h-3.5" />}
               <span className="hidden sm:inline">{copiedLink ? 'Tersalin' : 'Link'}</span>
             </button>
-            <button onClick={clearChat} title="Reset Chat" className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center">
-              <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <button
+              onClick={clearChat}
+              title="Reset Chat"
+              className="w-9 h-9 rounded-xl bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center flex-shrink-0 active:scale-95"
+            >
+              <RefreshCw className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           </div>
         </div>
 
         {/* Session Info Ribbon */}
-        <div className="bg-[#0D0D14] border-t border-b border-slate-800/80 px-3 sm:px-6 py-1 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-slate-400 gap-2">
-          <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-            <span className="text-red-400 font-bold flex-shrink-0">SESSION:</span>
-            <span className="text-slate-300 truncate max-w-[100px] min-[360px]:max-w-[150px] sm:max-w-none">
+        <div className="bg-[#0D0D14] border-t border-b border-slate-800/80 px-3 sm:px-6 py-1.5 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-slate-400 gap-3">
+          {/* Truncate from the left: the tail of a UUID is what distinguishes sessions */}
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <span className="text-red-400 font-bold flex-shrink-0">SID</span>
+            <span className="text-slate-300 truncate min-w-0" dir="rtl">
               {sessionId || (userIp ? ipToUuid(userIp) : 'loading...')}
             </span>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             <span className="hidden sm:inline text-slate-500">FORMAT: JSON</span>
-            <span className="text-emerald-400">● IP: {userIp || '...'}</span>
+            <span className="text-emerald-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+              {userIp || '...'}
+            </span>
           </div>
         </div>
       </header>
 
       {/* ── Messages ────────────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-5 pb-10 space-y-4">
+      <main className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-4 sm:pt-5 pb-8 sm:pb-10 space-y-3 sm:space-y-4">
 
 
           {/* Error banner */}
@@ -1681,26 +1856,44 @@ export const ChatPage: FC = () => {
             )}
           </AnimatePresence>
 
+          {/* Storage quota warning — chat still works, only persistence is lost */}
+          <AnimatePresence>
+            {persistFailed && (
+              <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono"
+              >
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span className="flex-1">
+                  Penyimpanan browser penuh — riwayat chat tidak tersimpan dan akan hilang jika halaman ditutup.
+                  Tekan <strong className="font-semibold">Reset Chat</strong> untuk mengosongkan, atau unduh sesi via tombol JSON.
+                </span>
+                <button onClick={() => setPersistFailed(false)} title="Tutup peringatan">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Message list — skip placeholder while waiting for first token (typing bubble handles it) */}
           <AnimatePresence initial={false}>
             {messages.filter(msg => !(msg.isStreaming && msg.text === '')).map((msg) => (
               <motion.div key={msg.id}
                 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.22 }}
-                className={`flex flex-col min-w-0 gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                className={`flex items-start gap-2 sm:gap-2.5 min-w-0 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
               >
-                {/* Avatar — selalu di atas */}
-                <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border ${msg.role === 'bot'
+                {/* Avatar beside the bubble, not above it — stacking cost a full row
+                    of vertical space per message on a phone screen. */}
+                <div className={`flex-shrink-0 w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl flex items-center justify-center border mt-0.5 ${msg.role === 'bot'
                   ? msg.isError
                     ? 'bg-red-900/30 border-red-500/50 text-red-400'
                     : 'bg-red-600/15 border-red-500/40 text-red-400'
                   : 'bg-slate-800 border-slate-700 text-slate-300'
                   }`}>
-                  {msg.role === 'bot' ? <Cpu className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                  {msg.role === 'bot' ? <Cpu className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <User className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                 </div>
 
-                {/* Content — di bawah avatar */}
-                <div className={`max-w-[85%] sm:max-w-[78%] min-w-0 flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[calc(100%-2.75rem)] sm:max-w-[78%] min-w-0 flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                   {/* Attachment previews */}
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className={`flex flex-wrap gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
@@ -1722,7 +1915,7 @@ export const ChatPage: FC = () => {
 
                   {/* Text Bubble */}
                   {(msg.text || (msg.isStreaming && msg.text !== '')) && (
-                    <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed min-w-0 w-full overflow-hidden ${msg.role === 'bot'
+                    <div className={`rounded-2xl px-3.5 sm:px-4 py-2.5 sm:py-3 text-sm leading-relaxed min-w-0 max-w-full overflow-hidden break-words ${msg.role === 'bot'
                       ? msg.isError
                         ? 'bg-red-950/40 border border-red-500/30 text-red-300 rounded-tl-sm'
                         : 'bg-[#0F0F16] border border-slate-800 text-slate-300 rounded-tl-sm'
@@ -1741,7 +1934,7 @@ export const ChatPage: FC = () => {
 
                   {/* Generated Images */}
                   {msg.generatedImages && msg.generatedImages.length > 0 && (
-                    <div className="flex flex-col gap-2 w-full max-w-xs sm:max-w-sm">
+                    <div className="flex flex-col gap-2 w-full max-w-full sm:max-w-sm">
                       {msg.generatedImages.map((b64, idx) => (
                         <GeneratedImageCard
                           key={idx}
@@ -1763,7 +1956,7 @@ export const ChatPage: FC = () => {
 
 
 
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 px-1">
+                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 px-0.5">
                     <span>
                       {msg.timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
                     </span>
@@ -1856,17 +2049,19 @@ export const ChatPage: FC = () => {
 
       {/* ── Input Area ──────────────────────────────────────────────────────── */}
       <div className="relative z-30 flex-shrink-0 bg-[#08080C]/95 backdrop-blur-md border-t border-slate-800/80 shadow-[0_-4px_20px_rgba(0,0,0,0.8)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:py-4 space-y-2 sm:space-y-3">
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-2.5 sm:pt-4 pb-[calc(10px+env(safe-area-inset-bottom))] sm:pb-4 space-y-2 sm:space-y-3">
 
-          {/* Quick prompts */}
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {QUICK_PROMPTS.map(p => (
-              <button key={p.label} onClick={() => sendMessage(p.label)} disabled={!canSend}
-                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 hover:border-red-500/50 hover:text-red-400 text-slate-400 text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-              >
-                {p.icon}{p.label}
-              </button>
-            ))}
+          {/* Quick prompts — bleeds to the screen edge so the strip reads as scrollable */}
+          <div className="-mx-3 sm:mx-0 px-3 sm:px-0 overflow-x-auto no-scrollbar fade-edge-r sm:[mask-image:none]">
+            <div className="flex gap-2 w-max pr-3 sm:pr-0">
+              {QUICK_PROMPTS.map(p => (
+                <button key={p.label} onClick={() => sendMessage(p.label)} disabled={!canSend}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 h-8 rounded-full bg-slate-900/80 border border-slate-800 hover:border-red-500/50 hover:text-red-400 text-slate-400 text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap active:scale-95"
+                >
+                  {p.icon}{p.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* ── BLOCKED OVERLAY ─────────────────────────────────────────────── */}
@@ -1903,7 +2098,7 @@ export const ChatPage: FC = () => {
           <AnimatePresence>
             {attachments.length > 0 && !isBlocked && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                className="flex flex-wrap gap-2 p-3 rounded-xl bg-slate-900/50 border border-slate-800"
+                className="flex flex-wrap gap-2 p-2.5 sm:p-3 rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden"
               >
                 {attachments.map(f => (
                   <AttachmentChip
@@ -1945,17 +2140,17 @@ export const ChatPage: FC = () => {
 
           {/* Input row */}
           {!isBlocked && (
-            <div className="flex items-center gap-2">
-              {/* Attach */}
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); fileRef.current?.click(); }}
-                disabled={!canSend}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {/* Attach File (Native Label for Mobile Safety) */}
+              <label
+                htmlFor="chat-file-input"
                 title="Lampirkan gambar / file"
-                className={`relative w-11 h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${attachments.length > 0
+                className={`relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 cursor-pointer active:scale-95 ${
+                  !canSend ? 'opacity-40 pointer-events-none' : ''
+                } ${attachments.length > 0
                   ? 'bg-red-500/15 border-red-500/50 text-red-400'
                   : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-red-400'
-                  }`}
+                }`}
               >
                 <Paperclip className="w-4 h-4" />
                 {attachments.length > 0 && (
@@ -1963,12 +2158,12 @@ export const ChatPage: FC = () => {
                     {attachments.length}
                   </span>
                 )}
-              </button>
+              </label>
               <input
+                id="chat-file-input"
                 ref={fileRef}
                 type="file"
-                multiple
-                accept="image/*,application/pdf,text/*,application/json"
+                accept="image/*,.pdf,.txt,.csv,.json,.md"
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -1979,7 +2174,7 @@ export const ChatPage: FC = () => {
                 onClick={toggleListening}
                 disabled={!canSend}
                 title={isListening ? 'Berhenti mendengarkan' : 'Bicara sekarang (Input Suara)'}
-                className={`relative w-11 h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
+                className={`relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
                   isListening
                     ? 'bg-red-600 text-white border-red-500 animate-pulse shadow-lg shadow-red-600/40'
                     : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-red-400'
@@ -1991,30 +2186,30 @@ export const ChatPage: FC = () => {
                 )}
               </button>
 
-              {/* Text input */}
-              <div className="flex-1 relative">
+              {/* Text input — min-w-0 keeps the flex row from overflowing on narrow screens */}
+              <div className="flex-1 relative min-w-0">
                 <input
                   type="text" value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKey}
                   disabled={!canSend}
                   placeholder={isListening ? 'Mendengarkan...' : attachments.length > 0 ? 'Keterangan...' : 'Ketik pesan...'}
-                  className="w-full px-4 py-3 pr-10 rounded-xl bg-[#0F0F16] border border-slate-800 focus:border-red-500/70 text-white placeholder-slate-600 focus:outline-none transition-colors font-mono text-base sm:text-sm disabled:opacity-60"
+                  className="w-full h-10 sm:h-11 px-3.5 sm:px-4 pr-8 rounded-xl bg-[#0F0F16] border border-slate-800 focus:border-red-500/70 text-white placeholder-slate-600 focus:outline-none transition-colors font-mono text-base sm:text-sm disabled:opacity-60"
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] text-slate-600">↵</span>
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-slate-600 pointer-events-none">↵</span>
               </div>
 
               {/* Send / Stop */}
               {isStreaming ? (
                 <button onClick={stopStreaming}
-                  className="w-11 h-11 rounded-xl bg-slate-800 border border-red-500/40 text-red-400 hover:bg-red-500/20 flex items-center justify-center transition-all flex-shrink-0"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-slate-800 border border-red-500/40 text-red-400 hover:bg-red-500/20 flex items-center justify-center transition-all flex-shrink-0 active:scale-95"
                 >
                   <StopCircle className="w-5 h-5" />
                 </button>
               ) : (
                 <button onClick={() => sendMessage()}
                   disabled={(!input.trim() && attachments.length === 0) || !canSend}
-                  className="w-11 h-11 rounded-xl bg-gradient-to-br from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-600 text-white flex items-center justify-center transition-all shadow-lg shadow-red-900/30 disabled:shadow-none flex-shrink-0"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-600 text-white flex items-center justify-center transition-all shadow-lg shadow-red-900/30 disabled:shadow-none flex-shrink-0 active:scale-95"
                 >
                   <Send className="w-4 h-4" />
                 </button>
@@ -2043,22 +2238,22 @@ export const ChatPage: FC = () => {
             </div>
 
             {/* Footer info */}
-            <div className="flex items-center justify-between text-[10px] font-mono text-slate-600">
-              <span className="flex items-center gap-1.5">
-                <Shield className="w-3 h-3" />
+            <div className="flex items-center justify-between gap-3 text-[10px] font-mono text-slate-600">
+              <span className="flex items-center gap-1.5 min-w-0">
+                <Shield className="w-3 h-3 flex-shrink-0" />
                 <span className="hidden sm:inline">Gemini AI • Streaming</span>
-                <span className="mx-1 text-slate-700">•</span>
-                <Clock className="w-3 h-3" />
-                <span>Reset: <span className="text-slate-500">{formatMs(timeLeft)}</span></span>
+                <span className="hidden sm:inline mx-1 text-slate-700">•</span>
+                <Clock className="w-3 h-3 flex-shrink-0" />
+                <span className="truncate">Reset <span className="text-slate-500">{formatMs(timeLeft)}</span></span>
               </span>
               <a
                 href="https://wa.me/6287824383200"
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center gap-1 text-red-500/60 hover:text-red-400 transition-colors"
+                className="flex items-center gap-0.5 text-red-500/60 hover:text-red-400 transition-colors flex-shrink-0"
               >
                 <span>Hubungi Fetsu</span>
-                <ChevronRight className="w-3 h-3" />
+                <ChevronRight className="w-3 h-3 flex-shrink-0" />
               </a>
             </div>
           </div>

@@ -391,6 +391,7 @@ const INLINE_RE = new RegExp(
     // delimiter ([^*] / [^_]) short-circuits at the first matching pair, while
     // still allowing emphasis to span a soft line break inside one paragraph.
     '\\*\\*\\*(?<biText>[^\\s*](?:[^*]*?[^\\s*])?)\\*\\*\\*',
+    '___(?<biUText>[^\\s_](?:[^_]*?[^\\s_])?)___',
     '\\*\\*(?<boldText>[^\\s*](?:[^*]*?[^\\s*])?)\\*\\*',
     '__(?<boldUText>[^\\s_](?:[^_]*?[^\\s_])?)__',
     '\\*(?<italText>[^\\s*](?:[^*]*?[^\\s*])?)\\*',
@@ -455,15 +456,15 @@ function parseInline(text: string): ReactNode[] {
       } else {
         pushText(g.domain);
       }
-    } else if (g.biText !== undefined) {
+    } else if (g.biText !== undefined || g.biUText !== undefined) {
       result.push(
-        <strong key={key++} className="text-white font-semibold">
-          <em className="italic">{parseInline(g.biText)}</em>
+        <strong key={key++} className="text-white font-bold italic">
+          {parseInline((g.biText ?? g.biUText)!)}
         </strong>
       );
     } else if (g.boldText !== undefined || g.boldUText !== undefined) {
       result.push(
-        <strong key={key++} className="text-white font-semibold">
+        <strong key={key++} className="text-white font-bold">
           {parseInline((g.boldText ?? g.boldUText)!)}
         </strong>
       );

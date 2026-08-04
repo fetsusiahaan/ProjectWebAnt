@@ -19,8 +19,8 @@ export const Footer: FC = () => {
                 <Terminal className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <span className="font-extrabold tracking-wider text-white flex items-center gap-1.5">
-                  FS <span className="text-red-500">//</span> CYBER.RED
+                <span className="font-extrabold tracking-wider text-base sm:text-lg text-white group-hover:text-red-400 transition-colors">
+                  Fetsu<span className="text-red-500">.</span>ID
                 </span>
                 <span className="text-[10px] sm:text-[11px] font-mono text-slate-500 block">
                   Software Engineer • Backend Developer<span className="hidden sm:inline"> • Solution Architect</span>

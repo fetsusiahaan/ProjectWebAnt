@@ -324,166 +324,107 @@ function downloadBase64Image(base64: string, filename: string, mime = 'image/jpe
 
 // ─── Markdown Renderer (Full Specification) ──────────────────────────────────
 
-const LINK_CLASS =
-  'text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline';
-
-/**
- * Suffixes that parse as a TLD but never are. Without this "file www.config.json
- * rusak" turns the filename into a hyperlink.
- */
-const NOT_A_TLD = new Set([
-  'json', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'css', 'scss', 'html', 'htm',
-  'md', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'yml', 'yaml',
-  'env', 'lock', 'log', 'sh', 'bash', 'py', 'go', 'rs', 'java', 'php', 'rb',
-  'xml', 'toml', 'ini', 'conf', 'sql', 'zip', 'tar', 'gz', 'pdf', 'doc', 'docx',
-  'csv', 'xls', 'xlsx', 'exe', 'dll', 'bak', 'tmp', 'test', 'spec', 'd',
-]);
-
-function looksLikeDomain(candidate: string): boolean {
-  const host = candidate.split(/[/?#]/)[0].replace(/^www\./, '');
-  const tld = host.split('.').pop()?.toLowerCase() ?? '';
-  return /^[a-z]{2,24}$/.test(tld) && !NOT_A_TLD.has(tld);
-}
-
-/**
- * Splits sentence punctuation off the tail of a URL: "kunjungi https://fetsu.id."
- * must not link the final full stop. A closing paren is kept when the URL opened
- * one, so /wiki/Foo_(bar) survives.
- */
-function splitUrlTail(url: string): [string, string] {
-  let end = url.length;
-  while (end > 0) {
-    const ch = url[end - 1];
-    if (ch === ')') {
-      const head = url.slice(0, end);
-      const opens = (head.match(/\(/g) ?? []).length;
-      const closes = (head.match(/\)/g) ?? []).length;
-      if (opens >= closes) break;
-    } else if (!'.,!?;:\'"]}'.includes(ch)) {
-      break;
-    }
-    end--;
-  }
-  return [url.slice(0, end), url.slice(end)];
-}
-
-/**
- * Inline scanner. Alternatives are ordered by precedence at a shared starting
- * character, longest-delimiter first — `***` must be tried before `**` before
- * `*`, or the extra asterisks leak into the rendered text.
- *
- * Emphasis bodies open and close on a non-space, non-delimiter character, which
- * is what keeps arithmetic ("5 * 3 * 2") from rendering as italics. The `_`
- * variants additionally require a non-word neighbour so snake_case identifiers
- * are left alone. Bodies match [\s\S] so emphasis can span a soft line break
- * within one paragraph.
- */
-const INLINE_RE = new RegExp(
-  [
-    '(?<code>`[^`\\n]+`)',
-    '(?<link>\\[(?<linkLabel>[^\\]]+)\\]\\((?<linkUrl>[^)\\s]+)\\))',
-    '(?<email>[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})',
-    '(?<url>https?:\\/\\/[^\\s<>"\']+)',
-    '(?<domain>(?:www\\.|github\\.com\\/)[^\\s<>"\']+)',
-    // Bodies may not swallow their own delimiter. A body of [\s\S]*?[^\s*] let
-    // "*x* dan *y*" read as one italic spanning both words, walking across the
-    // opening star of the second pair to close on the last one. Blocking the
-    // delimiter ([^*] / [^_]) short-circuits at the first matching pair, while
-    // still allowing emphasis to span a soft line break inside one paragraph.
-    '\\*\\*\\*(?<biText>[^\\s*](?:[^*]*?[^\\s*])?)\\*\\*\\*',
-    '___(?<biUText>[^\\s_](?:[^_]*?[^\\s_])?)___',
-    '\\*\\*(?<boldText>[^\\s*](?:[^*]*?[^\\s*])?)\\*\\*',
-    '__(?<boldUText>[^\\s_](?:[^_]*?[^\\s_])?)__',
-    '\\*(?<italText>[^\\s*](?:[^*]*?[^\\s*])?)\\*',
-    '(?<![A-Za-z0-9_])_(?<italUText>[^\\s_](?:[^_]*?[^\\s_])?)_(?![A-Za-z0-9_])',
-    '~~(?<strikeText>[\\s\\S]+?)~~',
-  ].join('|'),
-  'g',
-);
-
-// Parse inline formatting: bold, italic, strikethrough, code, links, emails
+// Parse inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url), raw URLs, emails
 function parseInline(text: string): ReactNode[] {
   const result: ReactNode[] = [];
+  // Match order: 
+  // 1. [label](url)
+  // 2. email address
+  // 3. raw https?:// url
+  // 4. raw domain url (www. or github.com/)
+  // 5. **bold**
+  // 6. *italic*
+  // 7. ~~strikethrough~~
+  // 8. `code`
+  const regex = /(\[([^\]]+)\]\(([^)\s]+)\)|([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|(https?:\/\/[^\s<)"']+)|((?:www\.|github\.com\/)[^\s<)"']+)|(\*\*(.+?)\*\*)|(\*(.+?)\*)|(~~(.+?)~~)|(`([^`]+)`))/gi;
+
   let last = 0;
-  let key = 0;
   let match: RegExpExecArray | null;
+  let key = 0;
 
-  const pushText = (value: string) => {
-    if (value) result.push(<span key={key++}>{value}</span>);
-  };
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) {
+      result.push(<span key={key++}>{text.slice(last, match.index)}</span>);
+    }
 
-  const pushLink = (href: string, label: ReactNode) => {
-    result.push(
-      <a key={key++} href={href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
-        {label}
-      </a>
-    );
-  };
+    const [full, , mdLabel, mdUrl, email, rawUrl, domainUrl, , boldText, , italicText, , strikeText, , codeText] = match;
 
-  INLINE_RE.lastIndex = 0;
-  while ((match = INLINE_RE.exec(text)) !== null) {
-    const g = match.groups as Record<string, string | undefined>;
-    if (match.index > last) pushText(text.slice(last, match.index));
-    last = match.index + match[0].length;
+    if (mdLabel && mdUrl) {
+      // 1. Markdown link [label](url)
+      const targetUrl = mdUrl.startsWith('http://') || mdUrl.startsWith('https://') || mdUrl.startsWith('mailto:')
+        ? mdUrl
+        : `https://${mdUrl}`;
 
-    if (g.code !== undefined) {
       result.push(
-        <code key={key++} className="px-1.5 py-0.5 mx-0.5 rounded-md bg-slate-800 border border-slate-700/80 text-red-300 font-mono text-[0.82em] align-middle">
-          {g.code.slice(1, -1)}
-        </code>
-      );
-    } else if (g.link !== undefined) {
-      const raw = g.linkUrl!;
-      // Anything that isn't an http(s)/mailto URL is prefixed rather than
-      // trusted, which neutralises javascript: and data: targets.
-      const href = /^(https?:\/\/|mailto:)/i.test(raw) ? raw : `https://${raw}`;
-      pushLink(href, parseInline(g.linkLabel!));
-    } else if (g.email !== undefined) {
-      result.push(
-        <a key={key++} href={`mailto:${g.email}`} className={LINK_CLASS}>
-          {g.email}
+        <a
+          key={key++}
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
+        >
+          {parseInline(mdLabel)}
         </a>
       );
-    } else if (g.url !== undefined) {
-      const [href, tail] = splitUrlTail(g.url);
-      pushLink(href, href);
-      pushText(tail);
-    } else if (g.domain !== undefined) {
-      const [candidate, tail] = splitUrlTail(g.domain);
-      if (looksLikeDomain(candidate)) {
-        pushLink(`https://${candidate}`, candidate);
-        pushText(tail);
-      } else {
-        pushText(g.domain);
-      }
-    } else if (g.biText !== undefined || g.biUText !== undefined) {
+    } else if (email) {
+      // 2. Email address
       result.push(
-        <strong key={key++} className="text-white font-bold italic">
-          {parseInline((g.biText ?? g.biUText)!)}
-        </strong>
+        <a
+          key={key++}
+          href={`mailto:${email}`}
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
+        >
+          {email}
+        </a>
       );
-    } else if (g.boldText !== undefined || g.boldUText !== undefined) {
+    } else if (rawUrl) {
+      // 3. Raw HTTP/HTTPS URL
       result.push(
-        <strong key={key++} className="text-white font-bold">
-          {parseInline((g.boldText ?? g.boldUText)!)}
-        </strong>
+        <a
+          key={key++}
+          href={rawUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
+        >
+          {rawUrl}
+        </a>
       );
-    } else if (g.italText !== undefined || g.italUText !== undefined) {
+    } else if (domainUrl) {
+      // 4. Raw domain URL
+      const targetUrl = domainUrl.startsWith('www.') ? `https://${domainUrl}` : `https://${domainUrl}`;
       result.push(
-        <em key={key++} className="italic text-slate-200">
-          {parseInline((g.italText ?? g.italUText)!)}
-        </em>
+        <a
+          key={key++}
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-400 hover:text-red-300 underline font-semibold transition-colors break-all cursor-pointer inline"
+        >
+          {domainUrl}
+        </a>
       );
-    } else if (g.strikeText !== undefined) {
+    } else if (boldText) {
+      result.push(<strong key={key++} className="text-white font-semibold">{parseInline(boldText)}</strong>);
+    } else if (italicText) {
+      result.push(<em key={key++} className="italic text-slate-200">{parseInline(italicText)}</em>);
+    } else if (strikeText) {
+      result.push(<del key={key++} className="line-through text-slate-400">{parseInline(strikeText)}</del>);
+    } else if (codeText) {
       result.push(
-        <del key={key++} className="line-through text-slate-400">
-          {parseInline(g.strikeText)}
-        </del>
+        <code key={key++} className="px-1.5 py-0.5 mx-0.5 rounded-md bg-slate-800 border border-slate-700/80 text-red-300 font-mono text-[0.82em] align-middle">
+          {codeText}
+        </code>
       );
     }
+
+    last = match.index + full.length;
   }
 
-  if (last < text.length) pushText(text.slice(last));
+  if (last < text.length) {
+    result.push(<span key={key++}>{text.slice(last)}</span>);
+  }
+
   return result;
 }
 
@@ -631,17 +572,11 @@ const CodeBlock: FC<{ lang: string; code: string }> = ({ lang, code }) => {
 function renderMarkdown(text: string): ReactNode[] {
   // Split into code-block segments vs. text segments
   const segments: { type: 'text' | 'code'; lang?: string; content: string }[] = [];
-  // Accepts ``` and ~~~ fences, and — critically — an unterminated one. The
-  // renderer re-runs on every prefix of the reply as it streams in, so a block
-  // whose closing fence has not arrived yet must still render as code; matching
-  // only closed fences made the source text flash as a paragraph mid-stream.
-  const codeRe = /(?:^|\n)[ \t]*(```|~~~)([\w+-]*)[ \t]*(?:\n([\s\S]*?))?(?:\n[ \t]*\1[ \t]*(?=\n|$)|$)/g;
+  const codeRe = /```([\w+-]*)\n?([\s\S]*?)```/g;
   let last = 0, m: RegExpExecArray | null;
   while ((m = codeRe.exec(text)) !== null) {
-    // The leading \n is part of the match but belongs to the preceding text.
-    const start = m.index + (text[m.index] === '\n' ? 1 : 0);
-    if (start > last) segments.push({ type: 'text', content: text.slice(last, start) });
-    segments.push({ type: 'code', lang: m[2] || 'code', content: m[3] ?? '' });
+    if (m.index > last) segments.push({ type: 'text', content: text.slice(last, m.index) });
+    segments.push({ type: 'code', lang: m[1] || 'code', content: m[2] });
     last = m.index + m[0].length;
   }
   if (last < text.length) segments.push({ type: 'text', content: text.slice(last) });
@@ -650,178 +585,174 @@ function renderMarkdown(text: string): ReactNode[] {
     if (seg.type === 'code') {
       return <CodeBlock key={`cb-${si}`} lang={seg.lang!} code={seg.content} />;
     }
-    return (
-      <div key={si} className="space-y-0.5">
-        {renderBlocks(seg.content.split('\n'), String(si))}
-      </div>
-    );
-  });
-}
 
-/**
- * Shared block-level renderer used by both the closed-fence and the
- * unterminated-fence paths so they stay in sync.
- *
- * Key contract: every React key is unique across the whole message
- * because it carries the `segId` prefix (the segment index) and the
- * line index `i`. Adjacent segments therefore never collide even when
- * both contain a list or table that starts at line 0.
- */
-function renderBlocks(lines: string[], segId: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  let i = 0;
+    const lines = seg.content.split('\n');
+    const nodes: ReactNode[] = [];
+    let i = 0;
 
-  while (i < lines.length) {
-    const line = lines[i];
+    while (i < lines.length) {
+      const line = lines[i];
 
-    // ── Table ──────────────────────────────────────────────────
-    if (line.trim().startsWith('|')) {
-      const tableLines: string[] = [];
-      let tIdx = i;
-      while (tIdx < lines.length && lines[tIdx].trim().startsWith('|')) {
-        tableLines.push(lines[tIdx].trim());
-        tIdx++;
-      }
+      // Markdown Table parsing
+      if (line.trim().startsWith('|')) {
+        const tableLines: string[] = [];
+        let tIdx = i;
+        while (tIdx < lines.length && lines[tIdx].trim().startsWith('|')) {
+          tableLines.push(lines[tIdx].trim());
+          tIdx++;
+        }
 
-      if (tableLines.length >= 2) {
-        // slice(1, -1) only strips a trailing pipe; a row without
-        // one keeps its last column intact.
-        const parseRow = (l: string) => l.split('|').slice(1, l.endsWith('|') ? -1 : undefined).map(c => c.trim());
-        const headers = parseRow(tableLines[0]);
-        const isSeparator = /^\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)*\|?$/.test(tableLines[1]);
-        const dataRows = (isSeparator ? tableLines.slice(2) : tableLines.slice(1)).map(parseRow);
+        if (tableLines.length >= 2) {
+          const parseRow = (l: string) => l.split('|').slice(1, -1).map(c => c.trim());
+          const headers = parseRow(tableLines[0]);
+          const isSeparator = /^\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)*\|?$/.test(tableLines[1]);
+          const dataRows = (isSeparator ? tableLines.slice(2) : tableLines.slice(1)).map(parseRow);
 
-        nodes.push(
-          <div key={`${segId}-tbl-${i}`} className="my-3 overflow-x-auto rounded-xl border border-slate-700/80 bg-[#09090F] shadow-lg">
-            <table className="w-full text-left border-collapse text-xs sm:text-sm">
-              <thead>
-                <tr className="bg-slate-800/90 border-b border-slate-700 text-red-400 font-mono">
-                  {headers.map((h, hIdx) => (
-                    <th key={hIdx} className="px-3.5 py-2 font-bold uppercase tracking-wider">
-                      {parseInline(h)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800 text-slate-200">
-                {dataRows.map((row, rIdx) => (
-                  <tr key={rIdx} className="hover:bg-slate-800/40 transition-colors">
-                    {row.map((cell, cIdx) => (
-                      <td key={cIdx} className="px-3.5 py-2.5 leading-relaxed">
-                        {parseInline(cell)}
-                      </td>
+          nodes.push(
+            <div key={`${si}-tbl-${i}`} className="my-3 overflow-x-auto rounded-xl border border-slate-700/80 bg-[#09090F] shadow-lg">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-800/90 border-b border-slate-700 text-red-400 font-mono">
+                    {headers.map((h, hIdx) => (
+                      <th key={hIdx} className="px-3.5 py-2 font-bold uppercase tracking-wider">
+                        {parseInline(h)}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-200">
+                  {dataRows.map((row, rIdx) => (
+                    <tr key={rIdx} className="hover:bg-slate-800/40 transition-colors">
+                      {row.map((cell, cIdx) => (
+                        <td key={cIdx} className="px-3.5 py-2.5 leading-relaxed">
+                          {parseInline(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+          i = tIdx;
+          continue;
+        }
+      }
+
+      // H1
+      if (/^# (.+)/.test(line)) {
+        nodes.push(<p key={`${si}-${i}`} className="text-lg font-extrabold text-white mt-3 mb-1">{parseInline(line.slice(2))}</p>);
+        i++; continue;
+      }
+      // H2
+      if (/^## (.+)/.test(line)) {
+        nodes.push(<p key={`${si}-${i}`} className="text-base font-bold text-white mt-2.5 mb-1">{parseInline(line.slice(3))}</p>);
+        i++; continue;
+      }
+      // H3
+      if (/^### (.+)/.test(line)) {
+        nodes.push(<p key={`${si}-${i}`} className="text-sm font-bold text-slate-200 mt-2 mb-0.5">{parseInline(line.slice(4))}</p>);
+        i++; continue;
+      }
+      // H4+
+      if (/^####+ (.+)/.test(line)) {
+        nodes.push(<p key={`${si}-${i}`} className="text-xs font-bold text-slate-300 uppercase tracking-wider mt-1.5 mb-0.5">{parseInline(line.replace(/^#+\s*/, ''))}</p>);
+        i++; continue;
+      }
+
+      // Blockquotes (> Quote)
+      if (/^> (.+)/.test(line)) {
+        const quoteLines: string[] = [];
+        while (i < lines.length && /^> /.test(lines[i])) {
+          quoteLines.push(lines[i].slice(2));
+          i++;
+        }
+        nodes.push(
+          <blockquote key={`${si}-bq-${i}`} className="border-l-4 border-red-500 bg-red-950/20 pl-3.5 py-1.5 my-2 rounded-r-lg italic text-slate-300 text-xs sm:text-sm">
+            {quoteLines.map((ql, qIdx) => (
+              <p key={qIdx}>{parseInline(ql)}</p>
+            ))}
+          </blockquote>
         );
-        i = tIdx;
         continue;
       }
-    }
 
-    // ── Headings ───────────────────────────────────────────────
-    if (/^#{1,6}\s+.+/.test(line)) {
-      const m = line.match(/^(#{1,6})\s+(.+)/)!;
-      const level = m[1].length;
-      const cls = ['text-lg font-extrabold text-white mt-3 mb-1', 'text-base font-bold text-white mt-2.5 mb-1', 'text-sm font-bold text-slate-200 mt-2 mb-0.5', 'text-xs font-bold text-slate-300 uppercase tracking-wider mt-1.5 mb-0.5', 'text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-1 mb-0.5', 'text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-1 mb-0.5'][level - 1];
-      nodes.push(<p key={`${segId}-h${level}-${i}`} className={cls}>{parseInline(m[2])}</p>);
-      i++; continue;
-    }
-
-    // ── Blockquote ─────────────────────────────────────────────
-    if (/^>\s+/.test(line)) {
-      const quoteLines: string[] = [];
-      while (i < lines.length && /^>\s+/.test(lines[i])) {
-        quoteLines.push(lines[i].replace(/^>\s+/, ''));
-        i++;
+      // Task List items (- [ ] or - [x])
+      if (/^[-*•] \[(x| )\] /i.test(line)) {
+        const items: ReactNode[] = [];
+        while (i < lines.length && /^[-*•] \[(x| )\] /i.test(lines[i])) {
+          const isChecked = /^[-*•] \[x\] /i.test(lines[i]);
+          const textContent = lines[i].replace(/^[-*•] \[(x| )\] /i, '');
+          items.push(
+            <li key={i} className="flex items-center gap-2 leading-relaxed">
+              <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] font-bold ${isChecked ? 'bg-red-600 border-red-500 text-white' : 'border-slate-600 bg-slate-800 text-transparent'
+                }`}>
+                ✓
+              </span>
+              <span className={isChecked ? 'line-through text-slate-400' : ''}>{parseInline(textContent)}</span>
+            </li>
+          );
+          i++;
+        }
+        nodes.push(<ul key={`${si}-task-${i}`} className="space-y-1.5 my-1.5">{items}</ul>);
+        continue;
       }
+
+      // Unordered Bullet list block
+      if (/^[-*•] /.test(line)) {
+        const items: ReactNode[] = [];
+        while (i < lines.length && /^[-*•] /.test(lines[i])) {
+          items.push(
+            <li key={i} className="flex gap-2 leading-relaxed">
+              <span className="text-red-400 mt-1 flex-shrink-0">•</span>
+              <span>{parseInline(lines[i].replace(/^[-*•] /, ''))}</span>
+            </li>
+          );
+          i++;
+        }
+        nodes.push(<ul key={`${si}-ul-${i}`} className="space-y-1 my-1">{items}</ul>);
+        continue;
+      }
+
+      // Numbered list block
+      if (/^\d+\. /.test(line)) {
+        const items: ReactNode[] = [];
+        let n = 1;
+        while (i < lines.length && /^\d+\. /.test(lines[i])) {
+          items.push(
+            <li key={i} className="flex gap-2 leading-relaxed">
+              <span className="text-red-400 font-mono text-[11px] mt-[3px] flex-shrink-0 w-4 text-right">{n}.</span>
+              <span>{parseInline(lines[i].replace(/^\d+\. /, ''))}</span>
+            </li>
+          );
+          i++; n++;
+        }
+        nodes.push(<ol key={`${si}-ol-${i}`} className="space-y-1 my-1">{items}</ol>);
+        continue;
+      }
+
+      // Horizontal rule (---, ***, ___)
+      if (/^(---|[*]{3}|_{3})$/.test(line.trim())) {
+        nodes.push(<hr key={`${si}-${i}`} className="border-slate-700/80 my-3" />);
+        i++; continue;
+      }
+
+      // Empty line → spacing
+      if (line.trim() === '') {
+        nodes.push(<div key={`${si}-${i}`} className="h-2" />);
+        i++; continue;
+      }
+
+      // Regular paragraph line
       nodes.push(
-        <blockquote key={`${segId}-bq-${i}`} className="border-l-4 border-red-500 bg-red-950/20 pl-3.5 py-1.5 my-2 rounded-r-lg italic text-slate-300 text-xs sm:text-sm">
-          {quoteLines.map((ql, qIdx) => (
-            <p key={qIdx}>{parseInline(ql)}</p>
-          ))}
-        </blockquote>
+        <p key={`${si}-${i}`} className="leading-relaxed">
+          {parseInline(line)}
+        </p>
       );
-      continue;
+      i++;
     }
-
-    // ── Task List ──────────────────────────────────────────────
-    if (/^[-*•]\s\[(x| )\]/i.test(line)) {
-      const items: ReactNode[] = [];
-      while (i < lines.length && /^[-*•]\s\[(x| )\]/i.test(lines[i])) {
-        const isChecked = /^[-*•]\s\[x\]/i.test(lines[i]);
-        const textContent = lines[i].replace(/^[-*•]\s\[(x| )\]\s*/i, '');
-        items.push(
-          <li key={`${segId}-task-${i}`} className="flex items-center gap-2 leading-relaxed">
-            <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] font-bold ${isChecked ? 'bg-red-600 border-red-500 text-white' : 'border-slate-600 bg-slate-800 text-transparent'}`}>
-              ✓
-            </span>
-            <span className={isChecked ? 'line-through text-slate-400' : ''}>{parseInline(textContent)}</span>
-          </li>
-        );
-        i++;
-      }
-      nodes.push(<ul key={`${segId}-task-${i}`} className="space-y-1.5 my-1.5">{items}</ul>);
-      continue;
-    }
-
-    // ── Unordered list (supports 2-space indent for nesting) ──
-    if (/^[-*•]\s/.test(line)) {
-      const items: ReactNode[] = [];
-      while (i < lines.length && /^[-*•]\s/.test(lines[i])) {
-        items.push(
-          <li key={`${segId}-ul-${i}`} className="flex gap-2 leading-relaxed">
-            <span className="text-red-400 mt-1 flex-shrink-0">•</span>
-            <span>{parseInline(lines[i].replace(/^[-*•]\s/, ''))}</span>
-          </li>
-        );
-        i++;
-      }
-      nodes.push(<ul key={`${segId}-ul-${i}`} className="space-y-1 my-1">{items}</ul>);
-      continue;
-    }
-
-    // ── Ordered list (renumbered from 1) ──────────────────────
-    if (/^\d+\.\s+/.test(line)) {
-      const items: ReactNode[] = [];
-      let n = 1;
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-        items.push(
-          <li key={`${segId}-ol-${i}`} className="flex gap-2 leading-relaxed">
-            <span className="text-red-400 font-mono text-[11px] mt-[3px] flex-shrink-0 w-4 text-right">{n}.</span>
-            <span>{parseInline(lines[i].replace(/^\d+\.\s+/, ''))}</span>
-          </li>
-        );
-        i++; n++;
-      }
-      nodes.push(<ol key={`${segId}-ol-${i}`} className="space-y-1 my-1">{items}</ol>);
-      continue;
-    }
-
-    // ── Horizontal rule ────────────────────────────────────────
-    if (/^(---|\*{3}|_{3}|-{4,}|\*{4,}|_{4,})$/.test(line.trim())) {
-      nodes.push(<hr key={`${segId}-hr-${i}`} className="border-slate-700/80 my-3" />);
-      i++; continue;
-    }
-
-    // ── Empty line → spacing ───────────────────────────────────
-    if (line.trim() === '') {
-      nodes.push(<div key={`${segId}-sp-${i}`} className="h-2" />);
-      i++; continue;
-    }
-
-    // ── Paragraph ──────────────────────────────────────────────
-    nodes.push(
-      <p key={`${segId}-p-${i}`} className="leading-relaxed">
-        {parseInline(line)}
-      </p>
-    );
-    i++;
-  }
-  return nodes;
+    return <div key={si} className="space-y-0.5">{nodes}</div>;
+  });
 }
 
 // ─── Quick prompts ────────────────────────────────────────────────────────────

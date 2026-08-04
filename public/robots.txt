@@ -1,11 +1,19 @@
 # https://www.robotstxt.org/robotstxt.html
+
 User-agent: *
 Allow: /
-Disallow: /api/private/
-Disallow: /*?*session_token=
 
-# Host
-Host: https://fetsu.id
+# Chat lives at /chat/<uuid> — one URL per visitor session, an unbounded
+# space of private conversations. Neither the sessions nor the /chat
+# redirect that mints them belong in an index.
+Disallow: /chat
+Disallow: /chat/
 
-# Sitemaps
+# Query strings never change what a page renders here, so crawling them
+# only yields duplicates of the canonical URL.
+Disallow: /*?
+
+# Source maps.
+Disallow: /assets/*.map$
+
 Sitemap: https://fetsu.id/sitemap.xml

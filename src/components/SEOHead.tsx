@@ -7,6 +7,8 @@ interface SEOProps {
   canonicalUrl?: string;
   ogImage?: string;
   ogType?: string;
+  /** Set false on pages that must stay out of search results. */
+  indexable?: boolean;
 }
 
 export function SEOHead({
@@ -16,6 +18,7 @@ export function SEOHead({
   canonicalUrl = "https://fetsu.id/",
   ogImage = "https://fetsu.id/og-cover.png",
   ogType = "website",
+  indexable = true,
 }: SEOProps) {
   useEffect(() => {
     // 1. Update Title
@@ -47,7 +50,13 @@ export function SEOHead({
     setMeta('name', 'description', description);
     setMeta('name', 'keywords', keywords);
     setMeta('name', 'author', 'Fetsu Siahaan');
-    setMeta('name', 'robots', 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1');
+    setMeta(
+      'name',
+      'robots',
+      indexable
+        ? 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
+        : 'noindex, nofollow',
+    );
 
     // Open Graph Meta
     setMeta('property', 'og:title', title);
@@ -55,14 +64,21 @@ export function SEOHead({
     setMeta('property', 'og:type', ogType);
     setMeta('property', 'og:url', canonicalUrl);
     setMeta('property', 'og:image', ogImage);
+    // Facebook, LinkedIn and WhatsApp reserve the card's space from these
+    // before the image itself loads; without them the preview reflows.
+    setMeta('property', 'og:image:width', '1200');
+    setMeta('property', 'og:image:height', '630');
+    setMeta('property', 'og:image:alt', title);
     setMeta('property', 'og:site_name', 'Fetsu Siahaan Portfolio & Enterprise Lab');
     setMeta('property', 'og:locale', 'id_ID');
 
     // Twitter Cards
     setMeta('name', 'twitter:card', 'summary_large_image');
+    setMeta('name', 'twitter:url', canonicalUrl);
     setMeta('name', 'twitter:title', title);
     setMeta('name', 'twitter:description', description);
     setMeta('name', 'twitter:image', ogImage);
+    setMeta('name', 'twitter:image:alt', title);
     setMeta('name', 'twitter:creator', '@fetsusiahaan');
 
     // Canonical link
@@ -152,7 +168,7 @@ export function SEOHead({
       document.head.appendChild(scriptEl);
     }
     scriptEl.textContent = JSON.stringify(schemaData, null, 2);
-  }, [title, description, keywords, canonicalUrl, ogImage, ogType]);
+  }, [title, description, keywords, canonicalUrl, ogImage, ogType, indexable]);
 
   return null;
 }

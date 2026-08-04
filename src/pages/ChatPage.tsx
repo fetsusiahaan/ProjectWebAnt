@@ -1834,10 +1834,14 @@ export const ChatPage: FC = () => {
       className="fixed inset-0 bg-[#08080C] flex flex-col text-slate-100 font-sans selection:bg-red-600 selection:text-white overflow-hidden"
       onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
     >
+      {/* The session id in the URL is per-visitor, so this page is kept out of
+          search results — indexing it would publish one entry per conversation
+          and leak session ids into the SERP. robots.txt disallows /chat too. */}
       <SEOHead
         title="AI Assistant Workspace — Fetsu Siahaan Software Architecture"
         description="Konsultasikan solusi REST API, arsitektur cloud, dan transformasi sistem enterprise secara langsung dengan AI Assistant Fetsu Siahaan."
         canonicalUrl="https://fetsu.id/chat"
+        indexable={false}
       />
 
       {/* Drag overlay */}

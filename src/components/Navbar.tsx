@@ -62,8 +62,8 @@ export const Navbar: FC = () => {
   return (
     <header
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled
-        ? 'bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/25 shadow-[0_4px_30px_rgba(0,0,0,0.8)] py-3'
-        : 'bg-gradient-to-b from-[#08080C]/80 via-[#08080C]/40 to-transparent backdrop-blur-sm py-3.5 md:py-6'
+        ? 'bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/25 shadow-[0_4px_30px_rgba(0,0,0,0.8)] py-3 md:py-4'
+        : 'bg-gradient-to-b from-[#08080C]/80 via-[#08080C]/40 to-transparent backdrop-blur-sm py-4 md:py-7'
         }`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3">
@@ -73,7 +73,9 @@ export const Navbar: FC = () => {
             <Terminal className="w-5 h-5" />
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="font-extrabold tracking-wider text-base sm:text-lg text-white group-hover:text-red-400 transition-colors flex items-center gap-1.5">
+            {/* No flex gap here — it inserted visible spaces around the dot and
+                rendered the wordmark as "Fetsu . ID". */}
+            <span className="font-extrabold tracking-wider text-base sm:text-lg text-white group-hover:text-red-400 transition-colors">
               Fetsu<span className="text-red-500">.</span>ID
             </span>
             {/* Full byline only where it fits — on a phone it wrapped to two lines

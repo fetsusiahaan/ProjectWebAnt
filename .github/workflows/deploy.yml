@@ -14,6 +14,10 @@ jobs:
         shell: powershell
 
     steps:
+      - name: Trust Repository
+        run: |
+          git config --global --add safe.directory "C:/Users/Fetra/Documents/Fetsu/ProjectWebAnt"
+
       - name: Update Repository
         run: |
           Set-Location "C:\Users\Fetra\Documents\Fetsu\ProjectWebAnt"

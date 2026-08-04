@@ -88,9 +88,9 @@ export const Navbar: FC = () => {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled
-        ? 'bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/25 shadow-[0_4px_30px_rgba(0,0,0,0.8)] py-3 md:py-4'
-        : 'bg-gradient-to-b from-[#08080C]/80 via-[#08080C]/40 to-transparent backdrop-blur-sm py-4 md:py-7'
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isScrolled
+        ? 'bg-[#08080C]/90 backdrop-blur-md border-b border-red-500/25 shadow-[0_4px_30px_rgba(0,0,0,0.8)] pt-[calc(0.875rem+env(safe-area-inset-top))] pb-3.5 md:pt-4 md:pb-4'
+        : 'bg-gradient-to-b from-[#08080C]/80 via-[#08080C]/40 to-transparent backdrop-blur-sm pt-[calc(1.25rem+env(safe-area-inset-top))] pb-5 md:pt-7 md:pb-7'
         }`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3">

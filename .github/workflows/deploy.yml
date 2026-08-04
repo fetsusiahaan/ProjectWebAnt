@@ -12,11 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test Runner
+      - name: Server Info
         shell: powershell
         run: |
-          Write-Host "Runner Connected!"
+          Write-Host "===== GitHub Runner Connected ====="
           hostname
+          pwd
           node -v
           npm -v
           git --version

@@ -86,6 +86,14 @@ export async function compressImageIfNeeded(
   }
 }
 
+/** Decodes base64 into a Blob URL — avoids the double memory cost of a `data:` URI string sitting in the DOM alongside its decoded bitmap. Caller must URL.revokeObjectURL when done. */
+export function base64ToBlobUrl(base64: string, mimeType: string): string {
+  const bytes = atob(base64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return URL.createObjectURL(new Blob([arr], { type: mimeType }));
+}
+
 export function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

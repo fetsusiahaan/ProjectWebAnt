@@ -6,8 +6,20 @@ import {
   X, FileText, Download, ZoomIn, ZoomOut,
   Image as ImageIcon,
 } from 'lucide-react';
-import { downloadBase64Image, formatFileSize } from './mediaUtils';
+import { downloadBase64Image, formatFileSize, base64ToBlobUrl } from './mediaUtils';
 import type { AttachedFile, ZoomImageData } from './types';
+
+/** Blob URL for a base64 payload — decodes once, revokes on unmount/change instead of keeping a `data:` string live in the DOM. */
+function useBlobUrl(base64: string | undefined, mimeType: string): string | undefined {
+  const [url, setUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!base64) { setUrl(undefined); return; }
+    const objectUrl = base64ToBlobUrl(base64, mimeType);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [base64, mimeType]);
+  return url;
+}
 
 // ─── Quick prompts ────────────────────────────────────────────────────────────
 export const QUICK_PROMPTS = [
@@ -29,7 +41,7 @@ export const GeneratedImageCard: FC<{
 }> = ({ base64, prompt, index, mime = 'image/png', onZoom }) => {
   const ext = mime.split('/')[1] || 'png';
   const filename = `fetsubot-image-${index + 1}.${ext}`;
-  const src = `data:${mime};base64,${base64}`;
+  const src = useBlobUrl(base64, mime);
 
   return (
     <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-[#09090F] group w-full sm:max-w-sm my-1 shadow-xl">
@@ -82,6 +94,11 @@ export const GeneratedImageCard: FC<{
 };
 
 // ─── Attachment chip ──────────────────────────────────────────────────────────
+const AttachmentThumb: FC<{ file: AttachedFile }> = ({ file }) => {
+  const src = useBlobUrl(file.base64, file.mimeType);
+  return <img src={src} alt={file.name} className="w-full h-full object-cover transition-transform duration-300 group-hover/chip:scale-110" />;
+};
+
 export const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void; onZoom?: () => void }> = ({ file, onRemove, onZoom }) => (
   <div className="relative group flex-shrink-0">
     {file.isImage && !file.base64 ? (
@@ -99,7 +116,7 @@ export const AttachmentChip: FC<{ file: AttachedFile; onRemove?: () => void; onZ
         className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-700 bg-slate-900 cursor-pointer group/chip"
         title="Klik untuk Zoom / Perbesar"
       >
-        <img src={`data:${file.mimeType};base64,${file.base64}`} alt={file.name} className="w-full h-full object-cover transition-transform duration-300 group-hover/chip:scale-110" />
+        <AttachmentThumb file={file} />
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/chip:opacity-100 flex items-center justify-center transition-opacity">
           <ZoomIn className="w-4 h-4 text-white" />
         </div>

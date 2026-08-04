@@ -23,48 +23,48 @@ export const Contact: FC = () => {
   };
 
   return (
-    <section id="contact" className="py-20 md:py-28 bg-[#08080C] relative scroll-mt-24">
+    <section id="contact" className="py-16 sm:py-20 md:py-28 bg-[#08080C] relative scroll-mt-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
         {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto mb-16 space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-xs tracking-wider uppercase">
-            <Terminal className="w-3.5 h-3.5" />
+        <div className="text-center max-w-3xl mx-auto mb-10 sm:mb-16 space-y-3.5 sm:space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-[11px] sm:text-xs tracking-wider uppercase">
+            <Terminal className="w-3.5 h-3.5 flex-shrink-0" />
             <span>Mulai Kolaborasi & Transformasi Digital</span>
           </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
+          <h2 className="text-2xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
             Hubungi <span className="text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-rose-400">Fetsu Siahaan</span>
           </h2>
-          <p className="text-slate-400 text-base sm:text-lg">
+          <p className="text-slate-400 text-[15px] sm:text-lg">
             Siap untuk membangun aplikasi modern, REST API super cepat, atau arsitektur sistem enterprise yang aman? Kirimkan detail kebutuhan Anda atau jadwalkan sesi konsultasi teknis langsung.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-10 items-start">
 
           {/* Left Column: Contact Cards & Info */}
           <div className="lg:col-span-5 space-y-6">
-            <div className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-6 sm:p-8 space-y-6 shadow-xl">
-              <h3 className="text-2xl font-bold text-white flex items-center gap-2.5">
-                <Cpu className="w-6 h-6 text-red-500" />
+            <div className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-5 sm:p-8 space-y-5 sm:space-y-6 shadow-xl">
+              <h3 className="text-lg sm:text-2xl font-bold text-white flex items-center gap-2.5">
+                <Cpu className="w-5 h-5 sm:w-6 sm:h-6 text-red-500 flex-shrink-0" />
                 <span>Saluran Komunikasi Langsung</span>
               </h3>
 
-              <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
+              <p className="text-slate-300 text-[13px] sm:text-base leading-relaxed">
                 Saya terbuka untuk diskusi konsultasi arsitektur (Solution Architecture), pengembangan REST API kelas enterprise, dan optimalisasi performa web aplikasi bisnis.
               </p>
 
               <div className="space-y-4 pt-2 font-mono text-sm">
                 <a
                   href="mailto:fetsusiahaan.dev@gmail.com"
-                  className="p-4 rounded-xl bg-white/[0.03] border border-slate-800 hover:border-red-500/60 flex items-center gap-4 transition-all duration-200 group"
+                  className="p-3.5 sm:p-4 rounded-xl bg-white/[0.03] border border-slate-800 hover:border-red-500/60 flex items-center gap-3 sm:gap-4 transition-all duration-200 group"
                 >
-                  <div className="w-10 h-10 rounded-lg bg-red-600/15 border border-red-500/40 flex items-center justify-center text-red-400 group-hover:bg-red-600 group-hover:text-white transition-colors">
+                  <div className="w-10 h-10 rounded-lg bg-red-600/15 border border-red-500/40 flex items-center justify-center text-red-400 group-hover:bg-red-600 group-hover:text-white transition-colors flex-shrink-0">
                     <Mail className="w-5 h-5" />
                   </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 block">EMAIL ENCRYPTED CHANNEL</span>
-                    <span className="text-white font-semibold group-hover:text-red-400 transition-colors">fetsu.siahaan@architecture.dev</span>
+                  <div className="min-w-0">
+                    <span className="text-[10px] sm:text-[11px] text-slate-400 block">EMAIL ENCRYPTED CHANNEL</span>
+                    <span className="text-white font-semibold text-[13px] sm:text-sm group-hover:text-red-400 transition-colors break-all">fetsu.siahaan@architecture.dev</span>
                   </div>
                 </a>
 
@@ -72,23 +72,23 @@ export const Contact: FC = () => {
                   href="https://github.com/fetsusiahaan"
                   target="_blank"
                   rel="noreferrer"
-                  className="p-4 rounded-xl bg-white/[0.03] border border-slate-800 hover:border-red-500/60 flex items-center gap-4 transition-all duration-200 group"
+                  className="p-3.5 sm:p-4 rounded-xl bg-white/[0.03] border border-slate-800 hover:border-red-500/60 flex items-center gap-3 sm:gap-4 transition-all duration-200 group"
                 >
-                  <div className="w-10 h-10 rounded-lg bg-red-600/15 border border-red-500/40 flex items-center justify-center text-red-400 group-hover:bg-red-600 group-hover:text-white transition-colors">
+                  <div className="w-10 h-10 rounded-lg bg-red-600/15 border border-red-500/40 flex items-center justify-center text-red-400 group-hover:bg-red-600 group-hover:text-white transition-colors flex-shrink-0">
                     <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
                       <path d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2z" />
                     </svg>
                   </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 block">GITHUB ENTERPRISE REPOS</span>
-                    <span className="text-white font-semibold group-hover:text-red-400 transition-colors">github.com/fetsusiahaan</span>
+                  <div className="min-w-0">
+                    <span className="text-[10px] sm:text-[11px] text-slate-400 block">GITHUB ENTERPRISE REPOS</span>
+                    <span className="text-white font-semibold text-[13px] sm:text-sm group-hover:text-red-400 transition-colors break-all">github.com/fetsusiahaan</span>
                   </div>
                 </a>
               </div>
 
               {/* Security Guarantee Badge */}
-              <div className="pt-4 border-t border-slate-800 flex items-center gap-2.5 text-xs font-mono text-emerald-400">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <div className="pt-4 border-t border-slate-800 flex items-center gap-2.5 text-[11px] sm:text-xs font-mono text-emerald-400">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                 <span>NDA & Enterprise Security Compliant</span>
               </div>
             </div>
@@ -96,17 +96,18 @@ export const Contact: FC = () => {
 
           {/* Right Column: Terminal-Style Contact Form */}
           <div className="lg:col-span-7">
-            <div className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-              {/* Terminal Window Header */}
-              <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded-full bg-red-500" />
-                  <span className="w-3 h-3 rounded-full bg-amber-500" />
-                  <span className="w-3 h-3 rounded-full bg-emerald-500" />
-                  <span className="ml-2 font-mono text-xs text-slate-400">bash: ./send_inquiry_to_fetsu.sh</span>
+            <div className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-5 sm:p-8 shadow-2xl relative overflow-hidden">
+              {/* Terminal Window Header — the script name truncates so the SSL badge
+                  keeps its place instead of being pushed out of the card. */}
+              <div className="flex items-center justify-between gap-2 pb-3.5 mb-5 sm:pb-4 sm:mb-6 border-b border-slate-800">
+                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-red-500 flex-shrink-0" />
+                  <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-amber-500 flex-shrink-0" />
+                  <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-emerald-500 flex-shrink-0" />
+                  <span className="ml-1 sm:ml-2 font-mono text-[10px] sm:text-xs text-slate-400 truncate">bash: ./send_inquiry_to_fetsu.sh</span>
                 </div>
-                <span className="text-[11px] font-mono text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/30">
-                  SECURE SSL CHANNEL
+                <span className="text-[10px] sm:text-[11px] font-mono text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/30 flex-shrink-0">
+                  <span className="hidden sm:inline">SECURE </span>SSL
                 </span>
               </div>
 
@@ -114,16 +115,16 @@ export const Contact: FC = () => {
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="py-12 text-center space-y-4"
+                  className="py-10 sm:py-12 text-center space-y-3.5 sm:space-y-4"
                 >
-                  <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center text-emerald-400 mx-auto">
-                    <CheckCircle2 className="w-8 h-8" />
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center text-emerald-400 mx-auto">
+                    <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8" />
                   </div>
-                  <h4 className="text-2xl font-bold text-white">Pesan Telah Terkirim!</h4>
-                  <p className="text-slate-300 max-w-md mx-auto text-sm">
+                  <h4 className="text-xl sm:text-2xl font-bold text-white">Pesan Telah Terkirim!</h4>
+                  <p className="text-slate-300 max-w-md mx-auto text-[13px] sm:text-sm">
                     Terima kasih telah menghubungi Fetsu Siahaan. Pesan Anda telah dienkripsi dan masuk ke antrean sistem. Saya akan segera merespons dalam waktu kurang dari 24 jam.
                   </p>
-                  <div className="pt-4 font-mono text-xs text-red-400">
+                  <div className="pt-4 font-mono text-[10px] sm:text-xs text-red-400 break-all">
                     STATUS: [200 OK] INQUIRY_RECEIVED_SUCCESSFULLY
                   </div>
                 </motion.div>

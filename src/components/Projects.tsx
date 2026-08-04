@@ -39,25 +39,25 @@ export const Projects: FC = () => {
   ];
 
   return (
-    <section id="projects" className="py-20 md:py-28 bg-[#0B0B10] relative overflow-hidden scroll-mt-24">
+    <section id="projects" className="py-16 sm:py-20 md:py-28 bg-[#0B0B10] relative overflow-hidden scroll-mt-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
+
         {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto mb-16 space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-xs tracking-wider uppercase">
-            <Terminal className="w-3.5 h-3.5" />
+        <div className="text-center max-w-3xl mx-auto mb-10 sm:mb-16 space-y-3.5 sm:space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-[11px] sm:text-xs tracking-wider uppercase">
+            <Terminal className="w-3.5 h-3.5 flex-shrink-0" />
             <span>Portofolio Solusi & Proyek Unggulan</span>
           </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
+          <h2 className="text-2xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
             Solusi Nyata untuk <span className="text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-rose-400">Efisiensi Bisnis</span>
           </h2>
-          <p className="text-slate-400 text-base sm:text-lg">
+          <p className="text-slate-400 text-[15px] sm:text-lg">
             Berikut adalah studi kasus implementasi aplikasi web modern, REST API, dan sistem enterprise yang telah dirancang untuk memenuhi standar tertinggi dalam kecepatan, keamanan, dan skalabilitas.
           </p>
         </div>
 
         {/* Projects Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-8">
           {projects.map((project, idx) => (
             <motion.div
               key={project.title}
@@ -65,32 +65,35 @@ export const Projects: FC = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.5, delay: idx * 0.15 }}
-              className="group rounded-2xl bg-[#0F0F16] border border-red-500/20 hover:border-red-500/70 p-6 sm:p-8 transition-all duration-300 hover:shadow-[0_0_35px_rgba(255,30,56,0.2)] flex flex-col justify-between relative overflow-hidden"
+              className="group rounded-2xl bg-[#0F0F16] border border-red-500/20 hover:border-red-500/70 p-5 sm:p-8 transition-all duration-300 hover:shadow-[0_0_35px_rgba(255,30,56,0.2)] flex flex-col justify-between relative overflow-hidden"
             >
-              {/* Top Accent Ribbon */}
-              <div className="absolute top-0 right-0 px-4 py-1.5 rounded-bl-xl bg-red-600 text-white font-mono text-[10px] font-bold uppercase tracking-widest shadow-md">
-                {project.highlight}
-              </div>
+              <div className="space-y-3.5 sm:space-y-4">
+                {/* The highlight used to be an absolutely-positioned corner ribbon,
+                    which forced the category line to reserve a wide right padding.
+                    Inline it instead — the two share a row and wrap on their own. */}
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  <span className="px-2.5 py-1 rounded-md bg-red-600 text-white font-mono text-[10px] font-bold uppercase tracking-widest shadow-md">
+                    {project.highlight}
+                  </span>
+                  <span className="text-[11px] sm:text-xs font-mono text-red-400/80 uppercase tracking-wider">
+                    {project.category}
+                  </span>
+                </div>
 
-              <div className="space-y-4">
-                <span className="text-xs font-mono text-red-400/80 uppercase tracking-wider block pr-32 sm:pr-36 pt-1 sm:pt-0">
-                  {project.category}
-                </span>
-
-                <h3 className="text-xl sm:text-2xl font-bold text-white group-hover:text-red-400 transition-colors">
+                <h3 className="text-lg sm:text-2xl font-bold text-white group-hover:text-red-400 transition-colors">
                   {project.title}
                 </h3>
 
-                <p className="text-slate-300/85 text-sm sm:text-base leading-relaxed">
+                <p className="text-slate-300/85 text-[13px] sm:text-base leading-relaxed">
                   {project.description}
                 </p>
 
                 {/* Tech Stack Chips */}
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="flex flex-wrap gap-1.5 sm:gap-2 pt-1 sm:pt-2">
                   {project.stack.map((tech) => (
                     <span
                       key={tech}
-                      className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-slate-800 text-xs font-mono text-slate-300"
+                      className="px-2 sm:px-2.5 py-1 rounded-md bg-white/[0.04] border border-slate-800 text-[11px] sm:text-xs font-mono text-slate-300"
                     >
                       {tech}
                     </span>
@@ -99,25 +102,25 @@ export const Projects: FC = () => {
               </div>
 
               {/* Bottom Metrics Bar & Action */}
-              <div className="mt-8 pt-5 border-t border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="grid grid-cols-3 gap-3 w-full sm:w-auto text-center sm:text-left">
+              <div className="mt-6 sm:mt-8 pt-4 sm:pt-5 border-t border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 sm:gap-4">
+                <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full sm:w-auto text-center sm:text-left">
                   <div>
                     <span className="text-[10px] font-mono text-slate-400 uppercase block">Latency</span>
-                    <span className="font-mono font-bold text-red-400 text-sm sm:text-base">{project.metrics.latency}</span>
+                    <span className="font-mono font-bold text-red-400 text-[13px] sm:text-base">{project.metrics.latency}</span>
                   </div>
                   <div>
                     <span className="text-[10px] font-mono text-slate-400 uppercase block">Capacity</span>
-                    <span className="font-mono font-bold text-white text-sm sm:text-base">{project.metrics.throughput}</span>
+                    <span className="font-mono font-bold text-white text-[13px] sm:text-base">{project.metrics.throughput}</span>
                   </div>
                   <div>
                     <span className="text-[10px] font-mono text-slate-400 uppercase block">Uptime</span>
-                    <span className="font-mono font-bold text-emerald-400 text-sm sm:text-base">{project.metrics.uptime}</span>
+                    <span className="font-mono font-bold text-emerald-400 text-[13px] sm:text-base">{project.metrics.uptime}</span>
                   </div>
                 </div>
 
                 <a
                   href="#contact"
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white font-semibold text-xs tracking-wider uppercase border border-red-500/30 transition-all duration-300 flex items-center justify-center gap-1.5 whitespace-nowrap"
+                  className="w-full sm:w-auto px-4 py-3 sm:py-2.5 rounded-lg bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white font-semibold text-xs tracking-wider uppercase border border-red-500/30 transition-all duration-300 flex items-center justify-center gap-1.5 whitespace-nowrap active:scale-[0.98]"
                 >
                   <span>Minta Spesifikasi</span>
                   <ArrowUpRight className="w-4 h-4" />
@@ -128,13 +131,13 @@ export const Projects: FC = () => {
         </div>
 
         {/* Enterprise Callout */}
-        <div className="mt-16 text-center">
+        <div className="mt-10 sm:mt-16 text-center">
           <a
             href="#contact"
-            className="inline-flex items-center gap-3 px-8 py-4 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-bold text-sm sm:text-base uppercase tracking-wider transition-all duration-300 glow-red hover:glow-red-lg shadow-xl"
+            className="flex sm:inline-flex items-center justify-center gap-2.5 sm:gap-3 px-5 sm:px-8 py-3.5 sm:py-4 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-bold text-[13px] sm:text-base uppercase tracking-wider transition-all duration-300 glow-red hover:glow-red-lg shadow-xl active:scale-[0.98]"
           >
-            <span>Konsultasikan Kebutuhan Proyek atau Sistem Anda</span>
-            <ArrowUpRight className="w-5 h-5" />
+            <span>Konsultasikan Kebutuhan Proyek<span className="hidden sm:inline"> atau Sistem</span> Anda</span>
+            <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
           </a>
         </div>
 

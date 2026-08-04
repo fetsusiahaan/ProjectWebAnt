@@ -3,10 +3,12 @@ import type { FC } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Layers, Activity, CheckCircle } from 'lucide-react';
 
-export const ArchitectureShowcase: FC = () => {
-  const [activeTab, setActiveTab] = useState<'speed' | 'security' | 'scalability'>('speed');
+type ArchPillar = 'speed' | 'security' | 'scalability';
 
-  const tabs = [
+export const ArchitectureShowcase: FC = () => {
+  const [activeTab, setActiveTab] = useState<ArchPillar>('speed');
+
+  const tabs: Array<{ id: ArchPillar; label: string; title: string }> = [
     { id: 'speed', label: '⚡ Speed & Performance', title: 'Ultra-Fast Response Architecture (< 15ms)' },
     { id: 'security', label: '🔒 Enterprise Security', title: 'Zero-Trust Layered Security Model' },
     { id: 'scalability', label: '📈 Elastic Scalability', title: 'Kubernetes Multi-Region Auto-Scaling' },
@@ -76,30 +78,30 @@ export const ArchitectureShowcase: FC = () => {
   };
 
   return (
-    <section id="architecture" className="py-20 md:py-28 bg-[#08080C] relative overflow-hidden scroll-mt-24">
+    <section id="architecture" className="py-16 sm:py-20 md:py-28 bg-[#08080C] relative overflow-hidden scroll-mt-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        
+
         {/* Header */}
-        <div className="text-center max-w-3xl mx-auto mb-14 space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-xs tracking-wider uppercase">
-            <Layers className="w-3.5 h-3.5" />
-            <span>Showcase Arsitektur Sistem (Interactive)</span>
+        <div className="text-center max-w-3xl mx-auto mb-8 sm:mb-14 space-y-3.5 sm:space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-[11px] sm:text-xs tracking-wider uppercase">
+            <Layers className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>Showcase Arsitektur Sistem</span>
           </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
+          <h2 className="text-2xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
             Mengapa Solusi Saya <span className="text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-rose-400">Cepat, Aman & Scalable?</span>
           </h2>
-          <p className="text-slate-400 text-base sm:text-lg">
+          <p className="text-slate-400 text-[15px] sm:text-lg">
             Klik pada setiap pilar di bawah ini untuk menjelajahi spesifikasi teknis, alur data (data flow), dan standar arsitektur yang saya terapkan dalam setiap proyek web dan REST API.
           </p>
         </div>
 
         {/* Tab Selection Buttons */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-4xl mx-auto mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 max-w-4xl mx-auto mb-8 sm:mb-10">
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`p-4 rounded-xl font-bold text-sm sm:text-base border transition-all duration-300 flex items-center justify-center gap-2.5 ${
+              onClick={() => setActiveTab(tab.id)}
+              className={`p-3.5 sm:p-4 rounded-xl font-bold text-sm sm:text-base border transition-all duration-300 flex items-center justify-center gap-2.5 active:scale-[0.98] ${
                 activeTab === tab.id
                   ? 'bg-gradient-to-r from-red-600 to-red-500 border-red-400 text-white glow-red shadow-lg scale-[1.02]'
                   : 'bg-[#0F0F16] border-slate-800 text-slate-300 hover:border-red-500/40 hover:text-white'
@@ -118,51 +120,58 @@ export const ArchitectureShowcase: FC = () => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
             transition={{ duration: 0.35 }}
-            className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-6 sm:p-10 shadow-2xl relative overflow-hidden"
+            className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-5 sm:p-10 shadow-2xl relative overflow-hidden"
           >
             {/* Top Badge Title */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 mb-8 border-b border-slate-800">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 pb-5 mb-6 sm:pb-6 sm:mb-8 border-b border-slate-800">
               <div>
-                <span className="font-mono text-xs text-red-400 uppercase tracking-widest">// SPECIFICATION OVERVIEW</span>
-                <h3 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">
+                <span className="font-mono text-[11px] sm:text-xs text-red-400 uppercase tracking-widest">// SPECIFICATION OVERVIEW</span>
+                <h3 className="text-xl sm:text-3xl font-extrabold text-white mt-1">
                   {tabs.find(t => t.id === activeTab)?.title}
                 </h3>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 font-mono text-xs text-red-300 w-fit">
-                <Activity className="w-4 h-4 text-red-500 animate-pulse" />
-                <span>ARCH_STATUS: ENTERPRISE READY</span>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 font-mono text-[11px] sm:text-xs text-red-300 w-fit flex-shrink-0">
+                <Activity className="w-4 h-4 text-red-500 animate-pulse flex-shrink-0" />
+                <span>ENTERPRISE READY</span>
               </div>
             </div>
 
             {/* Main Grid: Description & Metrics + Architecture Pipeline Diagram */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-              
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-7 sm:gap-10 items-start">
+
               {/* Left Side: Points & Metrics */}
-              <div className="lg:col-span-7 space-y-6">
-                <p className="text-slate-300 text-base sm:text-lg leading-relaxed">
+              <div className="lg:col-span-7 space-y-5 sm:space-y-6">
+                <p className="text-slate-300 text-[15px] sm:text-lg leading-relaxed">
                   {content[activeTab].description}
                 </p>
 
-                {/* Metrics Badges Row */}
-                <div className="grid grid-cols-3 gap-3">
+                {/* Metrics — three across is unreadable on a phone (labels like
+                    "Cache Hit Rate (Redis Cluster)" broke into four lines), so they
+                    stack into rows below sm. */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
                   {content[activeTab].metrics.map((m, i) => (
-                    <div key={i} className="p-3.5 rounded-xl bg-white/[0.03] border border-red-500/20 text-center">
-                      <span className="text-[10px] font-mono text-slate-400 block mb-1">{m.label}</span>
-                      <span className="text-base sm:text-xl font-bold font-mono text-white tracking-tight">{m.value}</span>
-                      <span className="text-[10px] font-mono text-emerald-400 block mt-0.5">{m.status}</span>
+                    <div
+                      key={i}
+                      className="p-3 sm:p-3.5 rounded-xl bg-white/[0.03] border border-red-500/20 flex items-center justify-between gap-3 sm:block sm:text-center"
+                    >
+                      <span className="text-[11px] sm:text-[10px] font-mono text-slate-400 sm:block sm:mb-1">{m.label}</span>
+                      <span className="flex items-baseline gap-2 flex-shrink-0 sm:block">
+                        <span className="text-base sm:text-xl font-bold font-mono text-white tracking-tight">{m.value}</span>
+                        <span className="text-[10px] font-mono text-emerald-400 sm:block sm:mt-0.5">{m.status}</span>
+                      </span>
                     </div>
                   ))}
                 </div>
 
                 {/* Bullet Points */}
-                <div className="space-y-3 pt-2">
-                  <h4 className="font-bold text-white text-sm uppercase tracking-wider flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-red-500" />
+                <div className="space-y-3 pt-1 sm:pt-2">
+                  <h4 className="font-bold text-white text-[13px] sm:text-sm uppercase tracking-wider flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                     <span>Key Engineering Highlights:</span>
                   </h4>
                   <ul className="space-y-2.5">
                     {content[activeTab].points.map((pt, idx) => (
-                      <li key={idx} className="flex items-start gap-3 text-slate-300 text-sm sm:text-base">
+                      <li key={idx} className="flex items-start gap-2.5 sm:gap-3 text-slate-300 text-[13px] sm:text-base leading-relaxed">
                         <span className="w-1.5 h-1.5 rounded-full bg-red-500 mt-2 flex-shrink-0" />
                         <span>{pt}</span>
                       </li>
@@ -172,8 +181,8 @@ export const ArchitectureShowcase: FC = () => {
               </div>
 
               {/* Right Side: Simulated Pipeline Diagram */}
-              <div className="lg:col-span-5 bg-black/70 border border-red-500/25 rounded-xl p-5 sm:p-6 space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800 font-mono text-xs text-slate-400">
+              <div className="lg:col-span-5 w-full bg-black/70 border border-red-500/25 rounded-xl p-4 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800 font-mono text-[11px] sm:text-xs text-slate-400">
                   <span>SYSTEM_FLOW // PIPELINE</span>
                   <span className="text-red-400">STAGE 1 TO 4</span>
                 </div>
@@ -181,13 +190,13 @@ export const ArchitectureShowcase: FC = () => {
                 <div className="space-y-3 pt-1">
                   {content[activeTab].diagram.map((item, idx) => (
                     <div key={idx} className="relative">
-                      <div className="p-3.5 rounded-lg bg-white/[0.04] border border-red-500/30 hover:border-red-500 transition-colors flex items-center justify-between">
-                        <div>
-                          <span className="text-xs font-mono text-red-400 block">// STEP 0{idx + 1}</span>
+                      <div className="p-3 sm:p-3.5 rounded-lg bg-white/[0.04] border border-red-500/30 hover:border-red-500 transition-colors flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-[11px] sm:text-xs font-mono text-red-400 block">// STEP 0{idx + 1}</span>
                           <span className="text-white font-bold text-sm sm:text-base block mt-0.5">{item.node}</span>
-                          <span className="text-xs text-slate-400 block mt-0.5">{item.desc}</span>
+                          <span className="text-[11px] sm:text-xs text-slate-400 block mt-0.5">{item.desc}</span>
                         </div>
-                        <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-400 font-mono text-xs font-bold">
+                        <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-400 font-mono text-xs font-bold flex-shrink-0">
                           {idx + 1}
                         </div>
                       </div>
@@ -202,7 +211,7 @@ export const ArchitectureShowcase: FC = () => {
                 </div>
 
                 <div className="pt-3 text-center">
-                  <span className="inline-block px-3 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs">
+                  <span className="inline-block px-3 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[10px] sm:text-xs">
                     ✓ PIPELINE VERIFIED BY FETSU SIAHAAN
                   </span>
                 </div>

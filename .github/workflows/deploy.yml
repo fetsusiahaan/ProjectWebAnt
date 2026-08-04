@@ -1,4 +1,4 @@
-name: Test Runner
+name: Git Pull
 
 on:
   push:
@@ -6,19 +6,20 @@ on:
       - main
 
 jobs:
-  test:
+  pull:
     runs-on: self-hosted
 
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Server Info
+    defaults:
+      run:
         shell: powershell
+
+    steps:
+      - name: Update Repository
         run: |
-          Write-Host "===== GitHub Runner Connected ====="
-          hostname
-          pwd
-          node -v
-          npm -v
-          git --version
-          
+          Set-Location "C:\Users\Fetra\Documents\Fetsu\ProjectWebAnt"
+
+          git fetch origin
+          git reset --hard origin/main
+          git clean -fd
+
+          git status

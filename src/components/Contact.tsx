@@ -129,10 +129,12 @@ export const Contact: FC = () => {
                   </div>
                 </motion.div>
               ) : (
-                <form onSubmit={handleSubmit} className="space-y-5 font-sans">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5 font-sans">
+                  {/* Fields carry text-base below sm: iOS Safari zooms the whole page
+                      in when a focused input is under 16px, which broke the layout. */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
                     <div>
-                      <label className="block font-mono text-xs text-red-400 uppercase tracking-wider mb-2">
+                      <label className="block font-mono text-[11px] sm:text-xs text-red-400 uppercase tracking-wider mb-2">
                         $ enter_client_name:
                       </label>
                       <input
@@ -141,11 +143,11 @@ export const Contact: FC = () => {
                         placeholder="Nama Anda atau Perusahaan"
                         value={formState.name}
                         onChange={(e) => setFormState({ ...formState, name: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white placeholder-slate-500 focus:outline-none transition-colors font-mono text-sm"
+                        className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white placeholder-slate-500 focus:outline-none transition-colors font-mono text-base sm:text-sm"
                       />
                     </div>
                     <div>
-                      <label className="block font-mono text-xs text-red-400 uppercase tracking-wider mb-2">
+                      <label className="block font-mono text-[11px] sm:text-xs text-red-400 uppercase tracking-wider mb-2">
                         $ enter_client_email:
                       </label>
                       <input
@@ -154,19 +156,19 @@ export const Contact: FC = () => {
                         placeholder="email@company.com"
                         value={formState.email}
                         onChange={(e) => setFormState({ ...formState, email: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white placeholder-slate-500 focus:outline-none transition-colors font-mono text-sm"
+                        className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white placeholder-slate-500 focus:outline-none transition-colors font-mono text-base sm:text-sm"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block font-mono text-xs text-red-400 uppercase tracking-wider mb-2">
+                    <label className="block font-mono text-[11px] sm:text-xs text-red-400 uppercase tracking-wider mb-2">
                       $ select_project_type:
                     </label>
                     <select
                       value={formState.projectType}
                       onChange={(e) => setFormState({ ...formState, projectType: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white focus:outline-none transition-colors font-mono text-sm"
+                      className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white focus:outline-none transition-colors font-mono text-base sm:text-sm"
                     >
                       <option className="bg-[#0F0F16]">REST API & Microservices Development</option>
                       <option className="bg-[#0F0F16]">Modern Web Application (React / Vite / Next.js)</option>
@@ -177,7 +179,7 @@ export const Contact: FC = () => {
                   </div>
 
                   <div>
-                    <label className="block font-mono text-xs text-red-400 uppercase tracking-wider mb-2">
+                    <label className="block font-mono text-[11px] sm:text-xs text-red-400 uppercase tracking-wider mb-2">
                       $ enter_project_specifications:
                     </label>
                     <textarea
@@ -186,16 +188,16 @@ export const Contact: FC = () => {
                       placeholder="Tuliskan gambaran singkat kebutuhan sistem, target performa, atau tantangan bisnis yang dihadapi..."
                       value={formState.message}
                       onChange={(e) => setFormState({ ...formState, message: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white placeholder-slate-500 focus:outline-none transition-colors font-mono text-sm resize-none"
+                      className="w-full px-4 py-3 rounded-xl bg-black/60 border border-slate-800 focus:border-red-500 text-white placeholder-slate-500 focus:outline-none transition-colors font-mono text-base sm:text-sm resize-none"
                     />
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-4 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-bold text-sm uppercase tracking-wider transition-all duration-300 glow-red hover:glow-red-lg flex items-center justify-center gap-2 shadow-lg"
+                    className="w-full py-3.5 sm:py-4 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-bold text-[13px] sm:text-sm uppercase tracking-wider transition-all duration-300 glow-red hover:glow-red-lg flex items-center justify-center gap-2 shadow-lg active:scale-[0.98]"
                   >
-                    <Send className="w-4 h-4" />
-                    <span>Kirim Pesan & Spesifikasi Teknis</span>
+                    <Send className="w-4 h-4 flex-shrink-0" />
+                    <span>Kirim Pesan<span className="hidden sm:inline"> & Spesifikasi Teknis</span></span>
                   </button>
                 </form>
               )}

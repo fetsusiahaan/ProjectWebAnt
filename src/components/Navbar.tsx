@@ -74,7 +74,7 @@ export const Navbar: FC = () => {
           </div>
           <div className="flex flex-col min-w-0">
             <span className="font-extrabold tracking-wider text-base sm:text-lg text-white group-hover:text-red-400 transition-colors flex items-center gap-1.5">
-              FetsuS<span className="text-red-500">.</span>ID
+              Fetsu<span className="text-red-500">.</span>ID
             </span>
             {/* Full byline only where it fits — on a phone it wrapped to two lines
                 and pushed the bar taller than the logo. */}

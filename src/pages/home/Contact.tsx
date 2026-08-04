@@ -40,11 +40,11 @@ export const Contact: FC = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-10 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-10 items-stretch">
 
           {/* Left Column: Contact Cards & Info */}
-          <div className="lg:col-span-5 space-y-6">
-            <div className="rounded-2xl bg-[#0F0F16] border border-red-500/30 p-5 sm:p-8 space-y-5 sm:space-y-6 shadow-xl">
+          <div className="lg:col-span-5 flex">
+            <div className="w-full rounded-2xl bg-[#0F0F16] border border-red-500/30 p-5 sm:p-8 space-y-5 sm:space-y-6 shadow-xl flex flex-col">
               <h3 className="text-lg sm:text-2xl font-bold text-white flex items-center gap-2.5">
                 <Cpu className="w-5 h-5 sm:w-6 sm:h-6 text-red-500 flex-shrink-0" />
                 <span>Saluran Komunikasi Langsung</span>
@@ -87,7 +87,7 @@ export const Contact: FC = () => {
               </div>
 
               {/* Security Guarantee Badge */}
-              <div className="pt-4 border-t border-slate-800 flex items-center gap-2.5 text-[11px] sm:text-xs font-mono text-emerald-400">
+              <div className="mt-auto pt-4 border-t border-slate-800 flex items-center gap-2.5 text-[11px] sm:text-xs font-mono text-emerald-400">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                 <span>NDA & Enterprise Security Compliant</span>
               </div>

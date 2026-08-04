@@ -1,8 +1,15 @@
 // ─── Chatbot Configuration & Categorized Services ──────────────────────────────
 
+// Set `enabled: true` to show the maintenance page instead of chat.
+// `until` format: "YYYY-MM-DD HH:mm" (local time, WIB).
+export const MAINTENANCE_CONFIG = {
+  enabled: true,
+  until: '2026-08-08 23:00',
+};
+
 export const CHAT_CONFIG = {
   apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
-  model: 'gemini-3.6-flash',
+  model: 'gemini-3.5-flash',
   models: [
     'gemini-3.6-flash',
     'gemini-3.5-flash',

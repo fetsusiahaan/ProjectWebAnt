@@ -10,16 +10,17 @@ import {
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
-import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../utils/session';
-import { putImages, loadSessionImages, clearSessionImages } from '../utils/imageStore';
-import { CHAT_CONFIG, SYSTEM_INSTRUCTION } from '../config/chatConfig';
-import { SEOHead } from '../components/SEOHead';
-import type { Part, HistoryEntry, AttachedFile, Message, LimitData, ZoomImageData } from './chat/types';
-import { compressImageIfNeeded, formatFileSize, fetchImageAsBase64, generateSvgFallbackBase64, MAX_FILE_BYTES, MAX_IMAGE_SOURCE_BYTES } from './chat/mediaUtils';
-import { loadLimit, saveLimit, formatMs, calculateTimeLeft } from './chat/rateLimit';
-import { extractImagePrompt, IMAGE_EDIT_INTENT, generatedImageKey, restoreGeneratedImages } from './chat/imageIntent';
-import { Markdown, Cursor } from './chat/markdown';
-import { GeneratedImageCard, AttachmentChip, ImageZoomModal, QUICK_PROMPTS } from './chat/components';
+import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../../utils/session';
+import { putImages, loadSessionImages, clearSessionImages } from '../../utils/imageStore';
+import { CHAT_CONFIG, SYSTEM_INSTRUCTION, MAINTENANCE_CONFIG } from '../../config/chatConfig';
+import { SEOHead } from '../../components/SEOHead';
+import { MaintenancePage } from './MaintenancePage';
+import type { Part, HistoryEntry, AttachedFile, Message, LimitData, ZoomImageData } from './types';
+import { compressImageIfNeeded, formatFileSize, fetchImageAsBase64, generateSvgFallbackBase64, MAX_FILE_BYTES, MAX_IMAGE_SOURCE_BYTES } from './mediaUtils';
+import { loadLimit, saveLimit, formatMs, calculateTimeLeft } from './rateLimit';
+import { extractImagePrompt, IMAGE_EDIT_INTENT, generatedImageKey, restoreGeneratedImages } from './imageIntent';
+import { Markdown, Cursor } from './markdown';
+import { GeneratedImageCard, AttachmentChip, ImageZoomModal, QUICK_PROMPTS } from './components';
 
 const API_KEY = CHAT_CONFIG.apiKey;
 const MODELS = CHAT_CONFIG.models || [CHAT_CONFIG.model || 'gemini-3.6-flash'];
@@ -31,6 +32,10 @@ const BLOCK_DURATION = CHAT_CONFIG.blockDurationMs;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export const ChatPage: FC = () => {
+  if (MAINTENANCE_CONFIG.enabled) {
+    return <MaintenancePage until={MAINTENANCE_CONFIG.until} />;
+  }
+
   const { sessionId } = useParams<{ sessionId: string }>();
 
   const [copiedLink, setCopiedLink] = useState(false);
@@ -416,7 +421,7 @@ export const ChatPage: FC = () => {
       });
       setPersistFailed(!ok);
 
-      const pending: import('../utils/imageStore').StoredImage[] = [];
+      const pending: import('../../utils/imageStore').StoredImage[] = [];
       const seen = persistedImageIds.current;
       const now = Date.now();
 

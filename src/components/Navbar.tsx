@@ -18,6 +18,33 @@ export const Navbar: FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // While the drawer is open the page behind it must not scroll — on a phone a
+  // stray swipe otherwise moved the content under a fixed overlay. Escape and a
+  // rotation into the desktop breakpoint both close it, since the drawer is
+  // hidden above md and would otherwise stay mounted and lock scrolling.
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileMenuOpen(false);
+    };
+    const onResize = () => {
+      if (window.innerWidth >= 768) setMobileMenuOpen(false);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [mobileMenuOpen]);
+
   const navLinks = [
     { name: 'Tentang', href: '#about' },
     { name: 'Keahlian', href: '#skills' },
@@ -121,8 +148,10 @@ export const Navbar: FC = () => {
         {/* Mobile Menu Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          aria-label="Toggle Menu"
-          className="md:hidden p-2.5 rounded-lg bg-slate-900/80 border border-red-500/30 text-slate-300 hover:text-red-400 transition-colors"
+          aria-label={mobileMenuOpen ? 'Tutup menu' : 'Buka menu'}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-menu"
+          className="md:hidden w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 border border-red-500/30 text-slate-300 hover:text-red-400 active:scale-95 transition-all flex-shrink-0"
         >
           {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
@@ -131,46 +160,63 @@ export const Navbar: FC = () => {
       {/* Mobile Drawer */}
       <AnimatePresence>
         {mobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.15 }}
-            className="md:hidden border-b border-red-500/30 bg-[#08080C]/95 backdrop-blur-xl px-4 pt-3 pb-6 space-y-3 shadow-2xl"
-          >
-            <div className="flex items-center justify-between py-2 border-b border-slate-800 text-xs font-mono text-emerald-400">
-              <span className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                SYSTEM STATUS: OPTIMAL (99.99%)
-              </span>
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            </div>
+          <>
+            {/* Tapping the page behind the drawer closes it. */}
+            <motion.button
+              type="button"
+              aria-label="Tutup menu"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setMobileMenuOpen(false)}
+              className="md:hidden fixed inset-0 -z-10 bg-black/60 backdrop-blur-[2px] cursor-default"
+            />
 
-            <div className="flex flex-col gap-1 pt-2">
-              {navLinks.map((link) => (
+            <motion.div
+              id="mobile-menu"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.15 }}
+              /* Capped height plus its own scroll: with the drawer open the body is
+                 locked, so on a short phone in landscape the CTA was unreachable. */
+              className="md:hidden overflow-y-auto overscroll-contain max-h-[calc(100dvh-5rem)] border-b border-red-500/30 bg-[#08080C]/95 backdrop-blur-xl px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))] space-y-3 shadow-2xl"
+            >
+              <div className="flex items-center justify-between gap-2 py-2 border-b border-slate-800 text-[11px] font-mono text-emerald-400">
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                  <span className="truncate">SYSTEM STATUS: OPTIMAL (99.99%)</span>
+                </span>
+                <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              </div>
+
+              <div className="flex flex-col gap-1 pt-1">
+                {navLinks.map((link, idx) => (
+                  <a
+                    key={link.name}
+                    href={link.href}
+                    onClick={(e) => handleNavClick(e, link.href)}
+                    className="px-3.5 py-3 rounded-lg text-[15px] font-medium text-slate-200 hover:text-red-400 hover:bg-red-500/10 active:bg-red-500/15 transition-colors flex items-center justify-between gap-3"
+                  >
+                    <span>{link.name}</span>
+                    <span className="font-mono text-xs text-red-500/60 flex-shrink-0">// 0{idx + 1}</span>
+                  </a>
+                ))}
+              </div>
+
+              <div className="pt-2">
                 <a
-                  key={link.name}
-                  href={link.href}
-                  onClick={(e) => handleNavClick(e, link.href)}
-                  className="px-4 py-3 rounded-lg text-base font-medium text-slate-200 hover:text-red-400 hover:bg-red-500/10 transition-colors flex items-center justify-between"
+                  href="#contact"
+                  onClick={(e) => handleNavClick(e, '#contact')}
+                  className="w-full py-3.5 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white font-semibold text-[13px] uppercase tracking-wider text-center flex items-center justify-center gap-2 glow-red-sm active:scale-[0.98] transition-transform"
                 >
-                  <span>{link.name}</span>
-                  <span className="font-mono text-xs text-red-500/60">// 0{navLinks.indexOf(link) + 1}</span>
+                  <Cpu className="w-4 h-4 flex-shrink-0" />
+                  <span>Konsultasi Proyek</span>
                 </a>
-              ))}
-            </div>
-
-            <div className="pt-3">
-              <a
-                href="#contact"
-                onClick={(e) => handleNavClick(e, '#contact')}
-                className="w-full py-3 rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white font-semibold text-sm uppercase tracking-wider text-center flex items-center justify-center gap-2 glow-red-sm"
-              >
-                <Cpu className="w-4 h-4" />
-                <span>Konsultasi Proyek</span>
-              </a>
-            </div>
-          </motion.div>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </header>

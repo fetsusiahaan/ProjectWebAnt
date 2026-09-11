@@ -9,7 +9,6 @@ import { CHAT_CONFIG } from '../../config/chatConfig';
 import type { Part, HistoryEntry } from './types';
 
 const BASE_URL = CHAT_CONFIG.baseUrl.replace(/\/+$/, '');
-const API_KEY = CHAT_CONFIG.apiKey;
 
 export interface GeneratedImage {
   base64: string;
@@ -75,30 +74,18 @@ export function toChatMessages(
 // ─── Transport ────────────────────────────────────────────────────────────────
 
 /**
- * The key has to travel twice, and both copies are load-bearing:
- *
- * - As `?key=`, because sending Authorization + application/json makes the
- *   browser fire a CORS preflight, and the gateway answers a bare OPTIONS with
- *   401 (no CORS headers) — which surfaces as an opaque "Failed to fetch".
- *   With the key on the URL the OPTIONS returns 200 and the allow-* headers.
- * - As the Authorization header, because the query parameter alone does not
- *   authenticate the POST itself ("Missing API key").
- *
- * Dropping either one breaks every request from a browser.
+ * BASE_URL is same-origin (`/api/ai`), so no credentials travel from the
+ * browser: the Worker attaches the key upstream. Being same-origin also means
+ * no CORS preflight, and no request to a private-network address.
  */
 function endpoint(path: string): string {
-  const url = new URL(`${BASE_URL}${path}`);
-  if (API_KEY) url.searchParams.set('key', API_KEY);
-  return url.toString();
+  return `${BASE_URL}${path}`;
 }
 
 async function post(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const res = await fetch(endpoint(path), {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${API_KEY}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   });

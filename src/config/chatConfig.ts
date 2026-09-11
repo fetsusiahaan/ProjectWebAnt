@@ -8,10 +8,13 @@ export const MAINTENANCE_CONFIG = {
 };
 
 export const CHAT_CONFIG = {
-  // OpenAI-compatible gateway. Vite is configured (envPrefix) to expose IDU_*
-  // to the bundle — see vite.config.ts.
-  baseUrl: import.meta.env.IDU_ENDPOINT || 'https://ai.intidatautama.com/v1',
-  apiKey: import.meta.env.IDU_API_KEY || '',
+  // Requests go to our own origin, where a Cloudflare Worker forwards them to
+  // the OpenAI-compatible gateway and attaches the key server-side
+  // (workers/ai-proxy.ts). Calling the gateway directly would expose the key in
+  // the bundle, and — because split-horizon DNS resolves it to a private
+  // address inside the intidatautama network — would make Chrome prompt the
+  // visitor for local-network access.
+  baseUrl: import.meta.env.IDU_PROXY || '/api/ai',
   displayName: 'IDU AI',
   model: 'cc/claude-sonnet-5',
   // Tried in order; the first model that responds wins. A concrete model leads

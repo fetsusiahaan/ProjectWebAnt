@@ -27,7 +27,7 @@ export interface Message {
   attachments?: AttachedFile[];
   isError?: boolean;
   isStreaming?: boolean;
-  generatedImages?: string[];   // base64 dari Gemini Image Generation
+  generatedImages?: string[];   // base64 hasil image generation
   generatedMime?: string;       // MIME type gambar (image/png, image/jpeg, dll)
   isImageGeneration?: boolean;  // flag: sedang generate gambar
   tokenCount?: number;          // Jumlah token respons dari asisten

@@ -4,6 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // IDU_* joins the default VITE_* prefix so the gateway URL and key reach the
+  // browser bundle. This is a pure frontend app: the key IS public — anyone can
+  // read it from DevTools. Rotate it if it leaks beyond the intended audience.
+  envPrefix: ['VITE_', 'IDU_'],
   plugins: [
     react(),
     tailwindcss(),
@@ -30,9 +34,6 @@ export default defineConfig({
             }
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
-            }
-            if (id.includes('@google/genai')) {
-              return 'vendor-genai';
             }
             return 'vendor-utils';
           }

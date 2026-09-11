@@ -3,21 +3,40 @@
 // Set `enabled: true` to show the maintenance page instead of chat.
 // `until` format: "YYYY-MM-DD HH:mm" (local time, WIB).
 export const MAINTENANCE_CONFIG = {
-  enabled: true,
+  enabled: false,
   until: '2026-08-08 23:00',
 };
 
 export const CHAT_CONFIG = {
-  apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
-  model: 'gemini-3.5-flash',
+  // OpenAI-compatible gateway. Vite is configured (envPrefix) to expose IDU_*
+  // to the bundle — see vite.config.ts.
+  baseUrl: import.meta.env.IDU_ENDPOINT || 'https://ai.intidatautama.com/v1',
+  apiKey: import.meta.env.IDU_API_KEY || '',
+  displayName: 'IDU AI',
+  model: 'cc/claude-sonnet-5',
+  // Tried in order; the first model that responds wins. A concrete model leads
+  // because the `idu-*` aliases re-route per request and intermittently land on
+  // claude-opus-5, which rejects image attachments ("Could not process image").
+  // They stay on as fallbacks for when the concrete model is unavailable.
   models: [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
+    'cc/claude-sonnet-5',
+    'idu-best',
+    'idu-pro',
+    'ag/gemini-3.8-flash',
   ],
-  imageModel: 'gemini-3.1-flash-image',
+  // Models that can transcribe audio (capabilities.audioInput on /v1/models).
+  audioModels: [
+    'ag/gemini-3.8-flash',
+    'ag/gemini-3.7-flash-medium',
+    'ag/gemini-3-flash',
+  ],
+  // No provider behind the gateway currently returns image output, so these are
+  // attempted and expected to fail through to the Pollinations/SVG fallbacks.
+  // Kept in place so an image-capable model only needs an entry here.
+  imageModel: 'ag/gemini-3.8-flash',
   imageModels: [
-    'gemini-3.1-flash-image',
-    'gemini-3-pro-image',
+    'ag/gemini-3.8-flash',
+    'idu-best',
   ],
   maxTokens: 4000,
   sessionDurationMs: 15 * 60 * 1000, // 15 minutes for normal token reset

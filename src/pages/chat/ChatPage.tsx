@@ -9,7 +9,6 @@ import {
   Mic, MicOff,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import { GoogleGenAI } from '@google/genai';
 import { ipToUuid, loadSessionJSON, saveSessionJSON } from '../../utils/session';
 import { putImages, loadSessionImages, clearSessionImages } from '../../utils/imageStore';
 import { CHAT_CONFIG, SYSTEM_INSTRUCTION, MAINTENANCE_CONFIG } from '../../config/chatConfig';
@@ -21,10 +20,12 @@ import { loadLimit, saveLimit, formatMs, calculateTimeLeft } from './rateLimit';
 import { extractImagePrompt, IMAGE_EDIT_INTENT, generatedImageKey, restoreGeneratedImages } from './imageIntent';
 import { Markdown, Cursor } from './markdown';
 import { GeneratedImageCard, AttachmentChip, ImageZoomModal, QUICK_PROMPTS } from './components';
+import { streamChat, generateContent, generateImage, estimateTokens } from './aiClient';
 
-const API_KEY = CHAT_CONFIG.apiKey;
-const MODELS = CHAT_CONFIG.models || [CHAT_CONFIG.model || 'gemini-3.6-flash'];
-const IMAGE_MODELS = CHAT_CONFIG.imageModels || [CHAT_CONFIG.imageModel, 'nano-banana', 'imagen-3.0-generate-002'];
+const MODELS = CHAT_CONFIG.models?.length ? CHAT_CONFIG.models : [CHAT_CONFIG.model];
+const IMAGE_MODELS = CHAT_CONFIG.imageModels?.length ? CHAT_CONFIG.imageModels : [CHAT_CONFIG.imageModel];
+const AUDIO_MODELS = CHAT_CONFIG.audioModels?.length ? CHAT_CONFIG.audioModels : MODELS;
+const AI_NAME = CHAT_CONFIG.displayName;
 const ACCEPTED_TYPES = CHAT_CONFIG.acceptedFileTypes;
 const MAX_TOKENS = CHAT_CONFIG.maxTokens;
 const SESSION_DURATION = CHAT_CONFIG.sessionDurationMs;
@@ -42,7 +43,7 @@ export const ChatPage: FC = () => {
 
   const defaultWelcomeMessage = (): Message[] => [{
     id: 'init', role: 'bot', timestamp: new Date(),
-    text: '👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **Gemini AI**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀',
+    text: `👋 Halo! Saya **FetsuBot** — asisten virtual Fetsu Siahaan, powered by **${AI_NAME}**.\n\nSilakan tanyakan apa saja, atau lampirkan **gambar / file** untuk dianalisis! 🚀`,
   }];
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -107,38 +108,48 @@ export const ChatPage: FC = () => {
           reader.readAsDataURL(audioBlob);
           reader.onloadend = async () => {
             const base64Audio = (reader.result as string).split(',')[1];
-            if (!base64Audio || !aiRef.current) return;
+            if (!base64Audio) return;
 
-            let res = null;
-            let transcrError = null;
-            for (const modelName of MODELS) {
+            // Only the audio-capable models are worth trying; the gateway may
+            // still strip the payload, in which case every model reports back
+            // that it received nothing and the user gets a clear message.
+            let transcript = '';
+            let transcrError: unknown = null;
+            for (const modelName of AUDIO_MODELS) {
               try {
-                res = await aiRef.current.models.generateContent({
+                const res = await generateContent({
                   model: modelName,
                   contents: [{
                     role: 'user',
                     parts: [
                       { inlineData: { mimeType, data: base64Audio } },
-                      { text: 'Transkripsikan rekaman suara ini ke dalam teks Bahasa Indonesia. Hanya kembalikan teks hasil transkrip saja tanpa komentar atau penjelasan tambahan.' }
-                    ]
-                  }]
+                      { text: 'Transkripsikan rekaman suara ini ke dalam teks Bahasa Indonesia. Hanya kembalikan teks hasil transkrip saja tanpa komentar atau penjelasan tambahan. Jika kamu tidak menerima audio apa pun, jawab persis: NO_AUDIO' },
+                    ],
+                  }],
+                  signal: AbortSignal.timeout(30_000),
                 });
-                break;
+                const candidate = res.text.trim();
+                if (candidate && !/NO_AUDIO/i.test(candidate)) {
+                  transcript = candidate;
+                  break;
+                }
+                transcrError = new Error('Model tidak menerima data audio.');
               } catch (e) {
                 console.warn(`Transcription failed with model ${modelName}:`, e);
                 transcrError = e;
               }
             }
 
-            if (!res) {
-              throw transcrError || new Error('All models failed to transcribe audio');
+            if (!transcript) {
+              console.warn('Audio transcription unavailable:', transcrError);
+              setApiError('Transkripsi suara belum didukung server AI saat ini. Silakan ketik pesan Anda.');
+              setIsListening(false);
+              setIsRecordingMedia(false);
+              return;
             }
 
-            const text = res.text?.trim() || '';
-            if (text) {
-              setInput(text);
-              sendMessage(text);
-            }
+            setInput(transcript);
+            sendMessage(transcript);
           };
         } catch (err) {
           console.error('Audio transcribe error:', err);
@@ -257,7 +268,7 @@ export const ChatPage: FC = () => {
       }
     }
 
-    // 3. Fallback to MediaRecorder + Gemini 3.6 Transcribe if Web Speech API is not available/failed
+    // 3. Fallback to MediaRecorder + server-side transcription if Web Speech API is not available/failed
     startMediaRecorderFallback();
   };
 
@@ -273,10 +284,6 @@ export const ChatPage: FC = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  // Singleton Gemini client
-  const aiRef = useRef<GoogleGenAI | null>(null);
-  if (!aiRef.current) aiRef.current = new GoogleGenAI({ apiKey: API_KEY });
 
   // Scroll to bottom — instant on first mount, smooth on new messages
   const isFirstMount = useRef(true);
@@ -655,26 +662,32 @@ export const ChatPage: FC = () => {
         let base64 = '';
         let mimeType = 'image/jpeg';
 
-        // Multimodel fallback loop: coba model 1 (gemini-3.1-flash-image), jika gagal lanjut ke opsi 2 (nano-banana), dst.
+        // Tier 1: models behind the gateway. None currently return image output,
+        // so this loop is expected to fall through today — it stays so that
+        // adding an image-capable id to CHAT_CONFIG.imageModels is the only
+        // change needed when one appears.
         for (const modelName of IMAGE_MODELS) {
           try {
-            const response = await aiRef.current!.models.generateContent({
+            const dedicated = await generateImage(modelName, promptText);
+            base64 = dedicated.base64;
+            mimeType = dedicated.mimeType;
+            break;
+          } catch (imgErr) {
+            console.warn(`Endpoint gambar '${modelName}' tidak tersedia:`, imgErr);
+          }
+
+          try {
+            const response = await generateContent({
               model: modelName,
               contents: [{ role: 'user', parts: reqParts }],
+              // Bounded so a stalled provider cannot block the Pollinations tier.
+              signal: AbortSignal.timeout(30_000),
             });
-
-            const resParts = response.candidates?.[0]?.content?.parts ?? [];
-            for (const part of resParts) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const inlineData = (part as any).inlineData;
-              if (inlineData?.data) {
-                base64 = inlineData.data as string;
-                mimeType = (inlineData.mimeType as string) || 'image/jpeg';
-                break;
-              }
+            if (response.images.length > 0) {
+              base64 = response.images[0].base64;
+              mimeType = response.images[0].mimeType;
+              break;
             }
-
-            if (base64) break; // Berhasil! Keluar dari loop fallback
           } catch (err) {
             console.warn(`Model gambar '${modelName}' gagal/error, mencoba model berikutnya...`, err);
           }
@@ -683,7 +696,7 @@ export const ChatPage: FC = () => {
         // Tier 2 Fallback Engine: High Quality Public AI Image Endpoint
         if (!base64) {
           try {
-            console.warn('Gemini models unavailable, switching to Tier 2 AI image engine fallback...');
+            console.warn('Gateway models returned no image, switching to Tier 2 AI image engine fallback...');
             const seed = Math.floor(Math.random() * 1000000);
             const encodedPrompt = encodeURIComponent(promptText);
             const pollUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&seed=${seed}`;
@@ -712,18 +725,9 @@ export const ChatPage: FC = () => {
           isImageGeneration: false,
         } : m));
 
-        let added = Math.ceil(isImageReq.length / 4) + 200;
-        try {
-          const tokenRes = await aiRef.current!.models.countTokens({
-            model: IMAGE_MODELS[0] || MODELS[0],
-            contents: isImageReq,
-          });
-          if (tokenRes && tokenRes.totalTokens) {
-            added = tokenRes.totalTokens + 200;
-          }
-        } catch (e) {
-          console.warn('Fallback to estimateTokens for image:', e);
-        }
+        // The gateway has no token-count endpoint, so the prompt is estimated
+        // and a flat 200 stands in for the image itself.
+        const added = estimateTokens(isImageReq) + 200;
 
         setMessages(prev => prev.map(m => m.id === botId ? { ...m, tokenCount: added } : m));
 
@@ -791,38 +795,44 @@ export const ChatPage: FC = () => {
       }
     }, 20);
 
+    let usageTokens: number | undefined;
+
     try {
-      let stream = null;
-      let textError = null;
-      let selectedModel = MODELS[0];
+      let textError: unknown = null;
+      let started = false;
 
       for (const modelName of MODELS) {
         if (abort.signal.aborted) break;
         try {
-          console.log(`Attempting generateContentStream with model: ${modelName}`);
-          stream = await aiRef.current!.models.generateContentStream({
+          console.log(`Attempting stream with model: ${modelName}`);
+          const stream = streamChat({
             model: modelName,
             contents,
-            config: { systemInstruction: SYSTEM_INSTRUCTION },
+            systemInstruction: SYSTEM_INSTRUCTION,
+            signal: abort.signal,
           });
-          selectedModel = modelName;
+
+          for await (const chunk of stream) {
+            if (abort.signal.aborted) break;
+            // The first delta commits us to this model: retrying another one
+            // after text is on screen would duplicate the visible answer.
+            if (chunk.text) started = true;
+            fullText += chunk.text;
+            if (chunk.completionTokens !== undefined) usageTokens = chunk.completionTokens;
+          }
+          textError = null;
           break; // Success!
         } catch (err) {
+          if (abort.signal.aborted) break;
           console.warn(`Model ${modelName} failed, trying next:`, err);
           textError = err;
+          if (started) break; // partial output already rendered — do not restart
+          fullText = '';
         }
       }
 
-      if (!stream && !abort.signal.aborted) {
-        throw textError || new Error('All models failed to respond.');
-      }
-
-      if (stream) {
-        for await (const chunk of stream) {
-          if (abort.signal.aborted) break;
-          const piece = chunk.text ?? '';
-          fullText += piece;
-        }
+      if (textError && !abort.signal.aborted) {
+        throw textError;
       }
 
       // Wait a moment for typewriter to finish catching up
@@ -837,18 +847,8 @@ export const ChatPage: FC = () => {
       ]);
 
       if (!abort.signal.aborted) {
-        let added = Math.ceil(fullText.length / 4);
-        try {
-          const tokenRes = await aiRef.current!.models.countTokens({
-            model: selectedModel,
-            contents: fullText,
-          });
-          if (tokenRes && tokenRes.totalTokens) {
-            added = tokenRes.totalTokens;
-          }
-        } catch (e) {
-          console.warn('Fallback to estimateTokens for response:', e);
-        }
+        // The final SSE frame carries usage; estimate only when it is missing.
+        const added = usageTokens ?? estimateTokens(fullText);
 
         setMessages(prev => prev.map(m => m.id === botId ? { ...m, tokenCount: added } : m));
 
@@ -869,7 +869,7 @@ export const ChatPage: FC = () => {
       } else {
         const msg = err instanceof Error ? err.message : String(err);
         setApiError(msg);
-        fullText = `⚠️ Gagal menghubungi Gemini AI.\n\n${msg}`;
+        fullText = `⚠️ Gagal menghubungi ${AI_NAME}.\n\n${msg}`;
       }
       setMessages(prev => prev.map(m =>
         m.id === botId ? { ...m, text: fullText, isError: !abort.signal.aborted } : m
@@ -984,7 +984,7 @@ export const ChatPage: FC = () => {
               <p className="font-bold text-white text-sm leading-tight flex items-center gap-1.5 min-w-0">
                 <span className="truncate">FetsuBot</span>
                 <span className="hidden min-[400px]:inline-flex text-[9px] sm:text-[10px] font-mono bg-amber-500/15 border border-amber-500/30 text-amber-400 px-1.5 py-0.5 rounded flex-shrink-0">
-                  Gemini 3.6
+                  {AI_NAME}
                 </span>
               </p>
               <p className="text-[10px] sm:text-[11px] font-mono text-emerald-400 flex items-center gap-1 leading-tight mt-0.5">
@@ -1444,7 +1444,7 @@ export const ChatPage: FC = () => {
             <div className="flex items-center justify-between gap-3 text-[10px] font-mono text-slate-600">
               <span className="flex items-center gap-1.5 min-w-0">
                 <Shield className="w-3 h-3 flex-shrink-0" />
-                <span className="hidden sm:inline">Gemini AI • Streaming</span>
+                <span className="hidden sm:inline">{AI_NAME} • Streaming</span>
                 <span className="hidden sm:inline mx-1 text-slate-700">•</span>
                 <Clock className="w-3 h-3 flex-shrink-0" />
                 <span className="truncate">Reset <span className="text-slate-500">{formatMs(timeLeft)}</span></span>
